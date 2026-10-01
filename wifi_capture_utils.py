@@ -20,7 +20,7 @@ def normalizar_mac(valor):
     return mac
 
 
-def seleccionar_ap(csv_path, ssid=None, bssid=None):
+def seleccionar_ap(csv_path, ssid=None, bssid=None, canal=None):
     bssid = normalizar_mac(bssid) if bssid else None
     encontrados = []
     with Path(csv_path).open(newline="", encoding="utf-8", errors="replace") as archivo:
@@ -34,20 +34,22 @@ def seleccionar_ap(csv_path, ssid=None, bssid=None):
                 continue
             try:
                 mac = normalizar_mac(primero)
-                canal = int(fila[3].strip())
+                canal_detectado = int(fila[3].strip())
             except ValueError:
                 continue
-            if not 1 <= canal <= 233:
+            if not 1 <= canal_detectado <= 233:
                 continue
             nombre = fila[13].strip()
-            if (ssid is None or nombre == ssid) and (bssid is None or mac == bssid):
-                encontrados.append((mac, canal))
+            if ((ssid is None or nombre == ssid)
+                    and (bssid is None or mac == bssid)
+                    and (canal is None or canal == canal_detectado)):
+                encontrados.append((mac, canal_detectado))
     unicos = list(dict.fromkeys(encontrados))
     if not unicos:
         raise ValueError("no se encontró el SSID/BSSID en el escaneo")
     if len(unicos) != 1:
         detalle = ", ".join(f"{mac} (canal {canal})" for mac, canal in unicos)
-        raise ValueError(f"objetivo ambiguo; indica --bssid: {detalle}")
+        raise ValueError(f"objetivo ambiguo; indica --canal o --bssid: {detalle}")
     return unicos[0]
 
 
@@ -92,6 +94,7 @@ def main():
     scan.add_argument("csv", type=Path)
     scan.add_argument("--ssid")
     scan.add_argument("--bssid")
+    scan.add_argument("--canal", type=int)
     filtrar = sub.add_parser("filtrar")
     filtrar.add_argument("origen", type=Path)
     filtrar.add_argument("destino", type=Path)
@@ -100,7 +103,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.accion == "seleccionar":
-            mac, canal = seleccionar_ap(args.csv, args.ssid, args.bssid)
+            mac, canal = seleccionar_ap(args.csv, args.ssid, args.bssid, args.canal)
             print(mac, canal)
         else:
             counts = filtrar_hashes(args.origen, args.destino, args.bssid, args.ssid)

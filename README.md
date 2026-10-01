@@ -160,12 +160,24 @@ sudo ./run_captura_wifi.sh --interfaz wlan0 --ssid 'Red de laboratorio' \
 # AP y canal conocidos: evita el escaneo. Acepta una interfaz ya en modo monitor.
 sudo ./run_captura_wifi.sh --interfaz wlan0mon \
   --bssid 02:11:22:33:44:55 --canal 6 --minutos 2
+
+# El mismo SSID en 2,4 y 5 GHz: el canal resuelve cuál de los AP capturar.
+sudo ./run_captura_wifi.sh --interfaz wlan0 --ssid 'Red de laboratorio' \
+  --canal 36 --escaneo-seg 45 --minutos 3
+
+# Conserva sólo la captura original, sin convertirla todavía a 22000.
+sudo ./run_captura_wifi.sh --interfaz wlan0 --ssid 'Red de laboratorio' \
+  --canal 6 --minutos 2 --solo-captura
 ```
 
 El escaneo busca la coincidencia exacta del SSID. Si varios AP anuncian el mismo
-nombre, el script pide concretar `--bssid` en vez de escoger uno al azar. Admite
-`--banda bg|a|abg` para el escaneo, `--salida DIR` para la carpeta de capturas y
-`--help` para todas las opciones. Si sólo se indica un BSSID, añade `--canal`.
+nombre (por ejemplo, en 2,4 y 5 GHz), usa `--canal` o `--bssid` para escoger uno;
+no se capturan ambos canales a la vez con una sola interfaz. `--banda bg` limita
+el escaneo a 2,4 GHz, `--banda a` a 5 GHz y `--banda abg` busca ambas (valor
+predeterminado). Con `--canal`, el escaneo escucha sólo ese canal y `--banda` no
+se utiliza. Para un BSSID y canal conocidos, se omite el escaneo. También
+admite `--salida DIR`; `--help` muestra todas las opciones. Si sólo se indica
+un BSSID, añade `--canal`.
 La captura es pasiva por defecto: puede terminar sin un PMKID o handshake útil.
 `--deauth 1` a `--deauth 3` habilita expresamente la desconexión y exige un
 `--bssid` indicado por quien ejecuta el script; puede interrumpir clientes, así
@@ -175,7 +187,19 @@ Las salidas se guardan con permisos privados en
 `~/capturas_wifi/<fecha>_wifi.<id>/` (o en `AUDITOR_CAPTURAS_DIR`). Si hay material
 WPA del AP seleccionado, quedan `captura-01.cap` y `objetivo.22000`; el script
 imprime la orden para analizar este último con `auditor_generico.sh`. La captura
-puede contener identificadores de dispositivos y tráfico de terceros: revisa y
+predeterminada dura 10 minutos; `--minutos N` acepta de 1 a 60. `22000` es el
+formato WPA de hashcat, no un tipo ni una duración de ataque. Con `--solo-captura`
+se guarda únicamente el `.cap` y se pospone la conversión; al analizar ese `.cap`,
+el auditor puede convertirlo a `22000` si `hcxtools` está instalado. En el auditor
+elige métodos con `--nivel`, listas con `--wl` y un límite estimado por trabajo
+con `--max-min`, por ejemplo:
+
+```bash
+./auditor_generico.sh --tipo wifi --motor hashcat --nivel 1-2 --max-min 5 \
+  /ruta/a/objetivo.22000
+```
+
+La captura puede contener identificadores de dispositivos y tráfico de terceros: revisa y
 elimina esos archivos antes de compartir el proyecto o la presentación.
 La pantalla dinámica de `airodump-ng` se descarta: no se crean `scan.log` ni
 `captura.log`, que podían crecer sin límite. El archivo `.cap` sí puede ocupar

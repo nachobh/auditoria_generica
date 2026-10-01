@@ -14,6 +14,7 @@ MINUTOS=10
 SALIDA_DIR=${AUDITOR_CAPTURAS_DIR:-}
 DEAUTH=0
 SECO=0
+SOLO_CAPTURA=0
 RUN_DIR=
 MON_IFACE=
 MON_CREADA=0
@@ -35,11 +36,12 @@ Opciones:
   --interfaz NOMBRE        interfaz WiFi; acepta una ya en modo monitor
   --ssid NOMBRE           nombre exacto de la red; si falta BSSID/canal, escanea
   --bssid MAC             selecciona un AP concreto; obligatorio para --deauth
-  --canal N               canal conocido (1..233)
+  --canal N               escanea sólo ese canal y selecciona su AP (1..233)
   --banda bg|a|abg        bandas del escaneo (por defecto abg)
   --escaneo-seg N         duración del escaneo (5..120, por defecto 20)
   --minutos N             duración de captura (1..60, por defecto 10)
   --salida DIR            directorio privado de capturas
+  --solo-captura          conserva el .cap sin convertirlo a formato 22000
   --deauth N              envía N tandas de desconexión al BSSID explícito (1..3)
   --dry-run               valida y muestra el plan; no pide root ni crea archivos
   --help                  esta ayuda
@@ -58,6 +60,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h) uso; exit 0;;
     --dry-run) SECO=1; shift;;
+    --solo-captura) SOLO_CAPTURA=1; shift;;
     --interfaz|--ssid|--bssid|--canal|--banda|--escaneo-seg|--minutos|--salida|--deauth)
       valor "$@"
       case "$1" in
@@ -103,15 +106,19 @@ fi
 if [ "$SECO" -eq 1 ]; then
   info "interfaz=$INTERFAZ · SSID=${SSID:-sin indicar} · BSSID=${BSSID:-por resolver} · canal=${CANAL:-por resolver}"
   info "banda=$BANDA · escaneo=${ESCANEO_SEG}s · captura=${MINUTOS}min · deauth=$DEAUTH"
+  info "salida de captura=$([ "$SOLO_CAPTURA" -eq 1 ] && printf 'cap' || printf 'cap + 22000')"
   info "salida=$SALIDA_DIR"
-  if [ -z "$BSSID" ] || [ -z "$CANAL" ]; then info "se hará un escaneo pasivo para resolver el AP"; fi
+  if [ -z "$BSSID" ] || [ -z "$CANAL" ]; then
+    info "se hará un escaneo pasivo para resolver el AP${CANAL:+ en el canal $CANAL}"
+  fi
   exit 0
 fi
 
 [ "$EUID" -eq 0 ] || error "ejecuta la captura con sudo; --dry-run funciona sin root"
-for herramienta in airodump-ng iw hcxpcapngtool python3; do
+for herramienta in airodump-ng iw python3; do
   command -v "$herramienta" >/dev/null 2>&1 || error "falta $herramienta"
 done
+[ "$SOLO_CAPTURA" -eq 1 ] || command -v hcxpcapngtool >/dev/null 2>&1 || error "falta hcxpcapngtool; usa --solo-captura si quieres conservar sólo el .cap"
 [ "$DEAUTH" -eq 0 ] || command -v aireplay-ng >/dev/null 2>&1 || error "falta aireplay-ng"
 umask 077
 [ ! -L "$SALIDA_DIR" ] || error "el directorio de salida no puede ser un enlace simbólico"
@@ -176,10 +183,16 @@ fi
 info "monitor=$MON_IFACE"
 
 if [ -z "$BSSID" ] || [ -z "$CANAL" ]; then
-  info "escaneando ${ESCANEO_SEG}s en banda $BANDA"
+  sintonizacion=(--band "$BANDA")
+  if [ -n "$CANAL" ]; then
+    sintonizacion=(--channel "$CANAL")
+    info "escaneando ${ESCANEO_SEG}s en canal $CANAL"
+  else
+    info "escaneando ${ESCANEO_SEG}s en banda $BANDA"
+  fi
   # airodump-ng repinta la pantalla sin parar; redirigirla a un archivo puede
   # consumir decenas de GB aun durante una captura breve.
-  airodump-ng --band "$BANDA" --output-format csv --write-interval 1 \
+  airodump-ng "${sintonizacion[@]}" --output-format csv --write-interval 1 \
     -w "$RUN_DIR/scan" "$MON_IFACE" >/dev/null 2>&1 &
   SCAN_PID=$!
   sleep "$ESCANEO_SEG"
@@ -188,9 +201,9 @@ if [ -z "$BSSID" ] || [ -z "$CANAL" ]; then
   selector=(seleccionar "$RUN_DIR/scan-01.csv")
   [ -z "$SSID" ] || selector+=(--ssid "$SSID")
   [ -z "$BSSID" ] || selector+=(--bssid "$BSSID")
+  [ -z "$CANAL" ] || selector+=(--canal "$CANAL")
   seleccion=$(python3 "$SCRIPT_DIR/wifi_capture_utils.py" "${selector[@]}") || exit 2
   read -r mac_encontrada canal_encontrado <<<"$seleccion"
-  [ -z "$CANAL" ] || [ "$CANAL" = "$canal_encontrado" ] || error "el canal indicado no coincide con el escaneo"
   BSSID=$mac_encontrada
   CANAL=$canal_encontrado
 fi
@@ -210,6 +223,14 @@ sleep "$((MINUTOS * 60))"
 parar_pid "$CAP_PID"; CAP_PID=
 CAP_FILE="$RUN_DIR/captura-01.cap"
 [ -s "$CAP_FILE" ] || error "no se generó una captura .cap"
+
+if [ "$SOLO_CAPTURA" -eq 1 ]; then
+  info "captura guardada sin conversión WPA 22000"
+  printf 'Siguiente paso, por separado:\n  '
+  printf '%q ' "$SCRIPT_DIR/auditor_generico.sh" --tipo wifi "$CAP_FILE"
+  printf '\n'
+  exit 0
+fi
 
 HASH_TODOS="$RUN_DIR/todos.22000"
 HASH_OBJETIVO="$RUN_DIR/objetivo.22000"

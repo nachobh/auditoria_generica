@@ -38,8 +38,14 @@ class WifiCaptureTests(unittest.TestCase):
                              ("12:34:56:78:9A:BC", 11))
             self.assertEqual(seleccionar_ap(ruta, "Red de prueba", "aa:bb:cc:dd:ee:ff"),
                              ("AA:BB:CC:DD:EE:FF", 36))
+            self.assertEqual(seleccionar_ap(ruta, "Red de prueba", canal=6),
+                             ("00:11:22:33:44:55", 6))
+            self.assertEqual(seleccionar_ap(ruta, "Red de prueba", canal=36),
+                             ("AA:BB:CC:DD:EE:FF", 36))
             with self.assertRaisesRegex(ValueError, "ambiguo"):
                 seleccionar_ap(ruta, "Red de prueba")
+            with self.assertRaisesRegex(ValueError, "no se encontró"):
+                seleccionar_ap(ruta, "Red de prueba", canal=100)
             with self.assertRaisesRegex(ValueError, "no se encontró"):
                 seleccionar_ap(ruta, "Red")
 
@@ -83,6 +89,17 @@ class WifiCaptureTests(unittest.TestCase):
             )
             self.assertEqual(directo.returncode, 0, directo.stderr)
             self.assertNotIn("se hará un escaneo pasivo", directo.stdout)
+
+            alternativa = subprocess.run(
+                ["bash", str(SCRIPT), "--interfaz", "wlan0", "--ssid",
+                 "Red de prueba", "--canal", "36", "--minutos", "2",
+                 "--solo-captura", "--dry-run"],
+                capture_output=True, text=True, timeout=10
+            )
+            self.assertEqual(alternativa.returncode, 0, alternativa.stderr)
+            self.assertIn("captura=2min", alternativa.stdout)
+            self.assertIn("salida de captura=cap", alternativa.stdout)
+            self.assertIn("canal=36", alternativa.stdout)
 
     def test_deauth_requiere_bssid_explicito(self):
         proc = subprocess.run(
