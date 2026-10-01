@@ -18,9 +18,11 @@ class KitTests(unittest.TestCase):
         datos = resumen()
         self.assertEqual(datos["candidatos_ficticios"], 8)
         self.assertTrue(datos["tabla_reutilizable_sin_sal"])
+        self.assertTrue(datos["tabla_falla_con_sal"])
         self.assertTrue(datos["sal_unica_cambia_verificador"])
         self.assertTrue(datos["login_bloqueado_tras_tres_fallos"])
         self.assertFalse(datos["clave_sin_segundo_factor_autentica"])
+        self.assertTrue(datos["clave_con_segundo_factor_autentica"])
 
     def test_dry_run_no_crea_archivos_ni_ejecuta_verificador(self):
         with tempfile.TemporaryDirectory() as td:
@@ -146,7 +148,50 @@ class KitTests(unittest.TestCase):
             self.assertFalse((base / "PWNED.txt").exists())
             self.assertNotIn(secreto, proceso.stdout)
             trabajo = next(salida.iterdir())
-            self.assertIn("verificacion=motor", (trabajo / "resultado.txt").read_text())
+            self.assertIn("verificacion=ok", (trabajo / "resultado.txt").read_text())
+
+    def test_rainbow_exige_que_el_candidato_coincida_con_el_hash(self):
+        for correcto in (False, True):
+            with self.subTest(correcto=correcto), tempfile.TemporaryDirectory() as td:
+                base = Path(td)
+                secreto = "solo_demo_ficticio_03!"
+                objetivo = base / "hash_ficticio.txt"
+                digest = hashlib.md5(secreto.encode()).hexdigest()
+                objetivo.write_text(digest + "\n")
+                motor = base / "hashcat_ficticio"
+                motor.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(1)\n")
+                motor.chmod(0o700)
+                binario = base / "bin"
+                binario.mkdir()
+                tabla = base / "tablas"
+                tabla.mkdir()
+                (tabla / "demo.rt").write_bytes(b"tabla ficticia")
+                rcrack = binario / "rcrack"
+                candidato = secreto if correcto else "solo_demo_ficticio_99!"
+                rcrack.write_text(
+                    f"#!{sys.executable}\n"
+                    f"print('plaintext of {digest} is {candidato}')\n"
+                )
+                rcrack.chmod(0o700)
+                salida = base / "salida"
+                env = {**os.environ, "AUDITORIA_DIR": str(salida),
+                       "AUDITOR_HASHCAT": str(motor),
+                       "AUDITOR_RAINBOW": str(binario),
+                       "AUDITOR_RAINBOW_TABLES": str(tabla)}
+                proceso = subprocess.run(
+                    ["bash", str(SCRIPT), "--tipo", "hash", "--modo", "0",
+                     "--nivel", "5", "--sin-calibrar", "--yes", str(objetivo)],
+                    env=env, capture_output=True, text=True, timeout=10
+                )
+                self.assertEqual(proceso.returncode, 0 if correcto else 1,
+                                 proceso.stdout + proceso.stderr)
+                trabajo = next(salida.iterdir())
+                informe = trabajo / "resultado.txt"
+                if correcto:
+                    self.assertIn("motor=rainbow", informe.read_text())
+                    self.assertIn("verificacion=ok", informe.read_text())
+                else:
+                    self.assertFalse(informe.exists())
 
 
 if __name__ == "__main__":

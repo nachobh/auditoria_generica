@@ -23,6 +23,7 @@ kit-auditoria-claves/
 ├── auditor_generico.sh          script principal (menú guiado o CLI)
 ├── demo_controles.py            demo pequeña con datos ficticios
 ├── test_kit.py                  pruebas sin credenciales reales
+├── PRESENTACION.md              guion breve para el equipo
 ├── README.md                    este archivo
 ├── .gitignore                   wordlists descargadas y resultados no se versionan
 ├── wordlists/
@@ -65,6 +66,8 @@ wordlists/descargar_wordlists.sh          # 12 listas, ~260 MB, con sha256
 rainbowcrack/build.sh                     # opcional: tablas del nivel 5
 ```
 
+Para la demo no hace falta descargar nada: `python3 demo_controles.py`.
+La descarga de listas y la compilación de RainbowCrack son opcionales.
 `descargar_wordlists.sh` sólo baja lo que falte; `--comprobar` revalida sha256,
 `--fuerza` repite la descarga y `wordlists/descargar_wordlists.sh rockyou.txt`
 baja una lista concreta. Las descargas están en `.gitignore`: cada compañero
@@ -97,7 +100,7 @@ Por línea de comandos:
 
 | Nivel | Qué hace |
 |-------|----------|
-| 1 | intentos inmediatos: `stupid-ones`, `unkown-azul` (y tu lista propia si la dejas en `wordlists/`) |
+| 1 | intentos inmediatos: `stupid-ones`, `unkown-azul` y `custom.txt` si existe |
 | 2 | listas comunes con reglas: `days`, `months`, `Most-Popular`, `JWT` (+best66) |
 | 3 | listas grandes con reglas: Merriam-Webster SCRABBLE, SCRABBLE-large, darkc0de |
 | 4 | masivas y combinaciones: Pwdb 10M, rockyou (solo y con best66), azul×días, híbrido lista propia+6 dígitos (si hay lista propia) |
@@ -105,8 +108,9 @@ Por línea de comandos:
 
 Los trabajos se ejecutan **en secuencia**. Al aparecer un candidato, se distingue
 entre verificación independiente (`ok`), rechazo (`rechazado`) y coincidencia
-según el motor sin verificación independiente (`motor`). Para Office, hashes
-sueltos y Wi-Fi no se afirma una verificación externa. En particular, `7z t`
+según el motor sin verificación independiente (`motor`). Los hashes hexadecimales
+MD5, SHA-1 y SHA-256 se recalculan para comprobar el candidato; para Office,
+otros hashes y Wi-Fi no se afirma una verificación independiente. `7z t`
 puede comprobar un documento Office normal sin comprobar ninguna clave.
 
 Otras opciones: `--dry-run` (plan orientativo sin ejecutar motores ni crear
@@ -116,6 +120,8 @@ archivos), `--yes` (sin preguntar), `--guardar-secretos` (conserva salida sensib
 `--formato NOMBRE` (formato john si hay duda), `--rainbow-dir DIR`.
 
 `--help` imprime toda la ayuda.
+Un hash hexadecimal sin metadatos es ambiguo: para hashcat, indica siempre
+`--modo` en lugar de asumir MD5 por su longitud.
 
 ### Formatos no reconocidos (`.xdf`, firmas propias…)
 

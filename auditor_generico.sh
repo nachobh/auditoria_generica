@@ -715,7 +715,8 @@ extraer_pass(){
   local tmp="$PASSFILE.tmp" line pass
   : > "$tmp"
   if [ "$MOTOR" = hashcat ] && [ -s "$POT" ] && [ -n "$MODO" ]; then
-    "$HC" -m "$MODO" "$HASHHC" --potfile-path "$POT" --show --outfile-format 2 2>/dev/null | head -1 > "$tmp"
+    line=$("$HC" -m "$MODO" "$HASHHC" --potfile-path "$POT" --show --outfile-format 2 2>/dev/null | head -1)
+    [ -n "$line" ] && printf '%s' "$line" > "$tmp"
   fi
   if [ ! -s "$tmp" ] && [ -s "$JPOT" ]; then
     line=$("$JOHN" --show --pot="$JPOT" ${FMTJ:+--format="$FMTJ"} "$HASHJOHN" 2>/dev/null | grep -v 'password hashes' | head -1)
