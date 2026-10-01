@@ -26,8 +26,11 @@ kit-auditoria-claves/
 ├── demo_controles.py            demo pequeña con datos ficticios
 ├── generar_variantes.py         variantes acotadas de semillas autorizadas
 ├── run_captura_wifi.sh          captura WiFi dirigida y configurable
+├── run_captura_wifi_wps.sh      observación WPS y captura breve de evidencia
 ├── wifi_capture_utils.py        selección de AP y filtrado WPA 22000
+├── wps_capture_utils.py         extrae sólo el estado WPS del AP elegido
 ├── test_wifi_capture.py         pruebas con redes y hashes ficticios
+├── test_wps_capture.py          pruebas de la observación WPS
 ├── test_kit.py                  pruebas sin credenciales reales
 ├── PRESENTACION.md              guion breve para el equipo
 ├── README.md                    este archivo
@@ -50,7 +53,7 @@ kit-auditoria-claves/
 sudo apt-get update
 sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
   python3-olefile libcompress-raw-lzma-perl poppler-utils \
-  hcxtools aircrack-ng iw build-essential libssl-dev
+  hcxtools aircrack-ng iw reaver build-essential libssl-dev
 ```
 
 - **Motor de crackeo:** `hashcat` (GPU) y/o `john`. El script prefiere hashcat y cae a
@@ -63,6 +66,8 @@ sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
   el script avisa y usa john (más lento).
 - **Captura WiFi:** `aircrack-ng`, `iw`, `hcxtools` y un adaptador compatible con
   modo monitor; la captura requiere `sudo`. `--dry-run` sólo necesita Bash.
+- **Observación WPS:** `reaver` aporta `wash`, que lee los anuncios WPS sin probar
+  PIN. El script WPS requiere además `aircrack-ng`, `iw` y modo monitor.
 - **Rainbow (nivel 5):** sólo si compilas `rainbowcrack/build.sh`.
 
 ## Puesta en marcha
@@ -207,6 +212,41 @@ espacio según el tráfico observado; comprueba el espacio libre antes de captur
 `.gitignore` excluye capturas y hashes. El script sólo detiene la interfaz monitor
 que crea, sin reiniciar NetworkManager.
 
+### WPS PIN: exposición y evidencia
+
+El PIN de **Wi-Fi Protected Setup (WPS)** es un mecanismo de registro distinto de
+la contraseña WPA/WPA2 y de los hashes `22000`. [CERT/CC VU#723755](https://www.kb.cert.org/vuls/id/723755/)
+documentó que la comprobación del PIN por mitades reduce el espacio efectivo de
+búsqueda a unas 11 000 pruebas y que la ausencia de bloqueo tras fallos en
+algunos routers hizo viable el abuso. Un AP que anuncia WPS no demuestra por sí
+solo que su método PIN esté habilitado ni que permita intentos sin límite.
+
+`run_captura_wifi_wps.sh` observa pasivamente, mediante
+[`wash`](https://github.com/t6x/reaver-wps-fork-t6x/blob/master/docs/README.WASH), **un BSSID y canal
+concretos**. Si se observa WPS, guarda una captura corta de ese AP con
+`airodump-ng`; el resultado incluye la versión y el estado de bloqueo anunciados
+por el AP y comprueba si el anuncio también aparece en el `.cap`. No envía PIN,
+no intenta registrarse, no recupera la clave WPA y no
+declara el AP vulnerable a partir del anuncio. Si no se observa WPS en la ventana,
+el resultado es inconcluyente. Consulta además la configuración del router para
+confirmar si WPS PIN está activo; desactivar WPS es la mitigación indicada por
+[CERT/CC](https://www.kb.cert.org/vuls/id/723755/).
+
+```bash
+# Usa el BSSID y canal de un AP propio o autorizado; no incorpores datos reales al repo.
+./run_captura_wifi_wps.sh --interfaz wlan0 --bssid 02:11:22:33:44:55 \
+  --canal 6 --dry-run
+sudo ./run_captura_wifi_wps.sh --interfaz wlan0 --bssid 02:11:22:33:44:55 \
+  --canal 6 --observar-seg 20 --captura-seg 15
+```
+
+Con un SSID presente en 2,4 y 5 GHz, ejecuta cada BSSID/canal por separado. El
+script crea una carpeta privada en `~/capturas_wifi/` y conserva el estado
+del AP elegido y, si hay WPS anunciado, `wps_evidencia-01.cap`; si tuvo que
+activar el modo monitor, también puede quedar `monitor.log`. La captura puede
+incluir tramas de otros dispositivos: revísala antes de compartirla. La salida
+de pantalla de `wash` y `airodump-ng` no se guarda en logs crecientes.
+
 ### Formatos no reconocidos (`.xdf`, firmas propias…)
 
 El tipo `externo` necesita un verificador: una orden que reciba el candidato
@@ -313,8 +353,8 @@ Sin descargar ninguna lista:
 
 ```bash
 bash -n auditor_generico.sh wordlists/descargar_wordlists.sh rainbowcrack/build.sh
-bash -n run_captura_wifi.sh
-python3 -m unittest -v test_kit test_wifi_capture
+bash -n run_captura_wifi.sh run_captura_wifi_wps.sh
+python3 -m unittest -v test_kit test_wifi_capture test_wps_capture
 python3 demo_controles.py
 
 printf 'prueba\n' > /tmp/prueba.txt
