@@ -1,0 +1,14 @@
+auditoria_logs/
+*.pot
+__pycache__/
+*.pyc
+wordlists/*.txt
+wordlists/*.tar.gz
+wordlists/*.tgz
+wordlists/.wl_tmp.*/
+rainbowcrack/bin/
+rainbowcrack/tables/*.rt
+rainbowcrack/src/rtgen
+rainbowcrack/src/rtdump
+rainbowcrack/src/rtsort
+rainbowcrack/src/rcrack

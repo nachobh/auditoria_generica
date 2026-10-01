@@ -1,0 +1,13 @@
+#archivo	lineas	sha256	modo	origen
+stupid-ones-in-production.txt	4	4a48329a96f76b387f2957435df560449ab3ecbaa54b4f7402819cd18b409221	txt	Passwords/stupid-ones-in-production.txt
+unkown-azul.txt	3629	3405dc2575287b0340c1762cdc57a7c44d5bfee26e4ab305e0b370560b6e4bcc	txt	Passwords/unkown-azul.txt
+days.txt	6240	d20018b5928f9a91b4e7ae765614e9655162f0451cc6a24a51036452b03387cd	txt	Passwords/days.txt
+months.txt	13431	c9a85e1c9494eab8893fce79babb16b337d09d89beea32a707aa9409403d3c82	txt	Passwords/months.txt
+Most-Popular-Letter-Passes.txt	47603	141a1ba1d2aabcb9069481d6aaa95159a3c0268e297ecedc40a30b6613d36b60	txt	Passwords/Most-Popular-Letter-Passes.txt
+scraped-JWT-secrets.txt	103979	96ad6475aadcb58b212c938b46495ad5d8c3e5daf32b08c0b4eb733f2cd268be	txt	Passwords/scraped-JWT-secrets.txt
+Merriam-Webster-SCRABBLE-4thEdition.txt	45949	309a19938c103bfd5dae2e49eb2c53acf7ff74f29ac9130833b00d9a58e366bd	gz:SCRABBLE/Merriam-Webster-SCRABBLE-4thEdition.txt	Passwords/SCRABBLE-hackerhouse.tgz
+SCRABBLE-large.txt	589940	bff558f753927e3923bc377cf9012c8f5dbe667baa3515bc63464dffe7693970	gz:SCRABBLE/SCRABBLE-large.txt	Passwords/SCRABBLE-hackerhouse.tgz
+SCRABBLE-munged-large.txt	597337	288d8e9ee2f7c1a6b88b91506fbcb53949fc0aaf30609a58890595f572f54055	gz:SCRABBLE/SCRABBLE-munged-large.txt	Passwords/SCRABBLE-hackerhouse.tgz
+darkc0de.txt	1471056	7ff6fdc547f8fa6649fb09140c0c2f59a3588d0d6fb8abb64fd0f09712f6dab2	txt	Passwords/darkc0de.txt
+Pwdb_top-10000000.txt	10000000	18dc49ca32b62455a61e3398f4ab9f93eb700ff142fa0d4b9fd11a727f3b80e4	txt	Passwords/Common-Credentials/Pwdb_top-10000000.txt
+rockyou.txt	14344391	6dfa76aa0e02303994fd1062d0ac983f0b69ece5474d85a5bba36362e19c1076	gz:rockyou.txt	Passwords/Leaked-Databases/rockyou.txt.tar.gz
