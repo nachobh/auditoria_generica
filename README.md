@@ -177,6 +177,9 @@ WPA del AP seleccionado, quedan `captura-01.cap` y `objetivo.22000`; el script
 imprime la orden para analizar este último con `auditor_generico.sh`. La captura
 puede contener identificadores de dispositivos y tráfico de terceros: revisa y
 elimina esos archivos antes de compartir el proyecto o la presentación.
+La pantalla dinámica de `airodump-ng` se descarta: no se crean `scan.log` ni
+`captura.log`, que podían crecer sin límite. El archivo `.cap` sí puede ocupar
+espacio según el tráfico observado; comprueba el espacio libre antes de capturar.
 `.gitignore` excluye capturas y hashes. El script sólo detiene la interfaz monitor
 que crea, sin reiniciar NetworkManager.
 

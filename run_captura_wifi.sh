@@ -177,8 +177,10 @@ info "monitor=$MON_IFACE"
 
 if [ -z "$BSSID" ] || [ -z "$CANAL" ]; then
   info "escaneando ${ESCANEO_SEG}s en banda $BANDA"
+  # airodump-ng repinta la pantalla sin parar; redirigirla a un archivo puede
+  # consumir decenas de GB aun durante una captura breve.
   airodump-ng --band "$BANDA" --output-format csv --write-interval 1 \
-    -w "$RUN_DIR/scan" "$MON_IFACE" >"$RUN_DIR/scan.log" 2>&1 &
+    -w "$RUN_DIR/scan" "$MON_IFACE" >/dev/null 2>&1 &
   SCAN_PID=$!
   sleep "$ESCANEO_SEG"
   parar_pid "$SCAN_PID"; SCAN_PID=
@@ -195,7 +197,7 @@ fi
 info "objetivo: BSSID=$BSSID · canal=$CANAL · SSID=${SSID:-no indicado}"
 
 airodump-ng --channel "$CANAL" --bssid "$BSSID" --output-format pcap,csv \
-  -w "$RUN_DIR/captura" "$MON_IFACE" >"$RUN_DIR/captura.log" 2>&1 &
+  -w "$RUN_DIR/captura" "$MON_IFACE" >/dev/null 2>&1 &
 CAP_PID=$!
 if [ "$DEAUTH" -gt 0 ]; then
   sleep 5
