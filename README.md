@@ -25,6 +25,9 @@ kit-auditoria-claves/
 ├── auditor_generico.sh          script principal (menú guiado o CLI)
 ├── demo_controles.py            demo pequeña con datos ficticios
 ├── generar_variantes.py         variantes acotadas de semillas autorizadas
+├── run_captura_wifi.sh          captura WiFi dirigida y configurable
+├── wifi_capture_utils.py        selección de AP y filtrado WPA 22000
+├── test_wifi_capture.py         pruebas con redes y hashes ficticios
 ├── test_kit.py                  pruebas sin credenciales reales
 ├── PRESENTACION.md              guion breve para el equipo
 ├── README.md                    este archivo
@@ -47,7 +50,7 @@ kit-auditoria-claves/
 sudo apt-get update
 sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
   python3-olefile libcompress-raw-lzma-perl poppler-utils \
-  hcxtools aircrack-ng build-essential libssl-dev
+  hcxtools aircrack-ng iw build-essential libssl-dev
 ```
 
 - **Motor de crackeo:** `hashcat` (GPU) y/o `john`. El script prefiere hashcat y cae a
@@ -58,6 +61,8 @@ sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
 - **PDF 7z/LZMA:** `libcompress-raw-lzma-perl` para `7z2john.pl`.
 - **WiFi:** `hcxtools` convierte `.cap/.pcap` al formato `22000` de hashcat; sin él,
   el script avisa y usa john (más lento).
+- **Captura WiFi:** `aircrack-ng`, `iw`, `hcxtools` y un adaptador compatible con
+  modo monitor; la captura requiere `sudo`. `--dry-run` sólo necesita Bash.
 - **Rainbow (nivel 5):** sólo si compilas `rainbowcrack/build.sh`.
 
 ## Puesta en marcha
@@ -136,6 +141,44 @@ archivos), `--ampliar`, `--yes` (sin preguntar), `--guardar-secretos` (conserva 
 `--help` imprime toda la ayuda.
 Un hash hexadecimal sin metadatos es ambiguo: para hashcat, indica siempre
 `--modo` en lugar de asumir MD5 por su longitud.
+
+### Captura WiFi dirigida
+
+`run_captura_wifi.sh` prepara una captura de una red propia o expresamente
+autorizada. También se conserva `/home/ignacia/run_captura_wifi.sh` como lanzador
+de compatibilidad en esta máquina; para compartir el proyecto, usa el script del
+kit. No hay SSID, BSSID, contraseña ni interfaz reales incorporados al repositorio.
+
+```bash
+# Comprueba el plan sin root, hardware ni archivos de salida.
+./run_captura_wifi.sh --interfaz wlan0 --ssid 'Red de laboratorio' --dry-run
+
+# Red elegida por SSID: escaneo pasivo, selección exacta y captura de 2 minutos.
+sudo ./run_captura_wifi.sh --interfaz wlan0 --ssid 'Red de laboratorio' \
+  --escaneo-seg 20 --minutos 2
+
+# AP y canal conocidos: evita el escaneo. Acepta una interfaz ya en modo monitor.
+sudo ./run_captura_wifi.sh --interfaz wlan0mon \
+  --bssid 02:11:22:33:44:55 --canal 6 --minutos 2
+```
+
+El escaneo busca la coincidencia exacta del SSID. Si varios AP anuncian el mismo
+nombre, el script pide concretar `--bssid` en vez de escoger uno al azar. Admite
+`--banda bg|a|abg` para el escaneo, `--salida DIR` para la carpeta de capturas y
+`--help` para todas las opciones. Si sólo se indica un BSSID, añade `--canal`.
+La captura es pasiva por defecto: puede terminar sin un PMKID o handshake útil.
+`--deauth 1` a `--deauth 3` habilita expresamente la desconexión y exige un
+`--bssid` indicado por quien ejecuta el script; puede interrumpir clientes, así
+que úsalo sólo cuando esa prueba esté autorizada.
+
+Las salidas se guardan con permisos privados en
+`~/capturas_wifi/<fecha>_wifi.<id>/` (o en `AUDITOR_CAPTURAS_DIR`). Si hay material
+WPA del AP seleccionado, quedan `captura-01.cap` y `objetivo.22000`; el script
+imprime la orden para analizar este último con `auditor_generico.sh`. La captura
+puede contener identificadores de dispositivos y tráfico de terceros: revisa y
+elimina esos archivos antes de compartir el proyecto o la presentación.
+`.gitignore` excluye capturas y hashes. El script sólo detiene la interfaz monitor
+que crea, sin reiniciar NetworkManager.
 
 ### Formatos no reconocidos (`.xdf`, firmas propias…)
 
@@ -243,7 +286,8 @@ Sin descargar ninguna lista:
 
 ```bash
 bash -n auditor_generico.sh wordlists/descargar_wordlists.sh rainbowcrack/build.sh
-python3 -m unittest -v test_kit
+bash -n run_captura_wifi.sh
+python3 -m unittest -v test_kit test_wifi_capture
 python3 demo_controles.py
 
 printf 'prueba\n' > /tmp/prueba.txt

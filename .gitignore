@@ -1,4 +1,9 @@
 auditoria_logs/
+capturas_wifi/
+*.cap
+*.pcap
+*.pcapng
+*.22000
 *.pot
 *.log
 password.txt
