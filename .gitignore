@@ -13,6 +13,7 @@ wordlists/*.txt
 wordlists/*.tar.gz
 wordlists/*.tgz
 wordlists/.wl_tmp.*/
+ejemplos/salidas/
 rainbowcrack/bin/
 rainbowcrack/tables/*.rt
 rainbowcrack/src/rtgen

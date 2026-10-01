@@ -13,11 +13,14 @@ copiar credenciales ni iniciar un servicio de red.
    `argon2-cffi`, Argon2id elevan el coste de cada intento. Los milisegundos
    medidos pertenecen a esta máquina y a esos parámetros.
 3. **Control online simulado:** señala el límite de tres fallos y que conocer
-   la contraseña no basta si falta el segundo factor. El simulador no hace
+   la contraseña no basta si falta el segundo factor. Muestra además dos de
+   tres cuentas ficticias que reutilizan la misma cadena. El simulador no hace
    peticiones de red ni reproduce un servicio de autenticación completo.
-4. **Auditoría reproducible:** muestra `python3 -m unittest -v test_kit` y el
-   informe anonimizado de una prueba con un archivo ZIP ficticio. `ok` significa
-   verificación independiente; `motor` sólo informa una coincidencia del motor.
+4. **Auditoría reproducible:** genera los [ocho casos ficticios](ejemplos/README.md)
+   y muestra cómo una lista de cuatro semillas, sus variantes y dos máscaras
+   encuentran patrones distintos. `python3 -m unittest -v test_kit` comprueba
+   el plan y los informes. `ok` significa verificación independiente; `motor`
+   sólo informa una coincidencia del motor.
 5. **Cierre:** recomienda contraseñas únicas y largas, un gestor de contraseñas,
    verificación de contraseñas comprometidas al registrarse, almacenamiento
    adecuado, límite de intentos y MFA. Para cuentas compatibles, considera

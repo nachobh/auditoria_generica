@@ -15,6 +15,8 @@ con sal única y PBKDF2-HMAC-SHA256 con 100 000 iteraciones. Si está instalado
 `argon2-cffi`, mide también Argon2id con 19 MiB y dos iteraciones. Incluye una
 tabla precalculada pequeña y un simulador local de límite de intentos y segundo
 factor. Sus tiempos son ilustrativos de esta máquina.
+Para una auditoría pequeña de varios patrones, consulta
+[los ocho casos ficticios](ejemplos/README.md).
 
 ## Estructura
 
@@ -22,6 +24,7 @@ factor. Sus tiempos son ilustrativos de esta máquina.
 kit-auditoria-claves/
 ├── auditor_generico.sh          script principal (menú guiado o CLI)
 ├── demo_controles.py            demo pequeña con datos ficticios
+├── generar_variantes.py         variantes acotadas de semillas autorizadas
 ├── test_kit.py                  pruebas sin credenciales reales
 ├── PRESENTACION.md              guion breve para el equipo
 ├── README.md                    este archivo
@@ -30,6 +33,7 @@ kit-auditoria-claves/
 │   ├── manifest.tsv             nombre, líneas, sha256, origen SecLists
 │   ├── descargar_wordlists.sh   trae las listas y verifica sha256
 │   └── (tus listas propias: .gitignore las excluye del repo)
+├── ejemplos/                  ocho hashes MD5 y semillas ficticias generables
 └── rainbowcrack/
     ├── build.sh                 compila la fuente a rainbowcrack/bin/
     ├── src/                     RainbowCrack 1.2 parcheado (g++ y openssl actuales)
@@ -106,6 +110,16 @@ Por línea de comandos:
 | 4 | masivas y combinaciones: Pwdb 10M, rockyou (solo y con best66), azul×días, híbrido lista propia+6 dígitos (si hay lista propia) |
 | 5 | máscaras (`?d?d?d?d?d?d?d?d`, …) y rainbow tables (MD5/SHA1 sin sal) |
 
+`--ampliar` añade métodos **offline** y acotados: PIN de 4 cifras (nivel 1),
+PIN de 6 cifras, cambios de mayúsculas, año más símbolo, prefijos y sufijos de
+dos cifras y unión de dos semillas (nivel 2). Usa `--wl` o `wordlists/custom.txt`
+para las variantes; lee como máximo 24 semillas de 3–40 caracteres y genera
+menos de 6 000 candidatos por lote. Los PIN de 6 cifras suponen hasta un millón
+de intentos: revisa el plan y usa `--max-min` en formatos lentos. No se añaden
+estos métodos al verificador externo.
+Las variantes de texto se preparan como listas temporales privadas y se borran
+al acabar, salvo con `--guardar-secretos`.
+
 Los trabajos se ejecutan **en secuencia**. Al aparecer un candidato, se distingue
 entre verificación independiente (`ok`), rechazo (`rechazado`) y coincidencia
 según el motor sin verificación independiente (`motor`). Los hashes hexadecimales
@@ -114,7 +128,7 @@ otros hashes y Wi-Fi no se afirma una verificación independiente. `7z t`
 puede comprobar un documento Office normal sin comprobar ninguna clave.
 
 Otras opciones: `--dry-run` (plan orientativo sin ejecutar motores ni crear
-archivos), `--yes` (sin preguntar), `--guardar-secretos` (conserva salida sensible),
+archivos), `--ampliar`, `--yes` (sin preguntar), `--guardar-secretos` (conserva salida sensible),
 `--max-min N` (omite trabajos estimados sobre N minutos), `--sin-calibrar`
 (estimaciones sin medir), `--wl lista1,lista2` (sustituye niveles 1-2),
 `--formato NOMBRE` (formato john si hay duda), `--rainbow-dir DIR`.
@@ -151,6 +165,7 @@ Con `--guardar-secretos` se conservan, sólo localmente:
 - `resultado.txt` — fecha, objetivo, tipo, motor, modo, fase, candidato y verificación
 - `hashcat.pot` / `john.pot` — potfiles de los motores
 - `*.log` — log de cada trabajo del plan
+- `extra_*.txt` — variantes generadas, si se usó `--ampliar`
 
 Queda fuera del repositorio (ver `.gitignore`): **no subas nunca** esos directorios.
 Incluso en el modo predeterminado, el proceso maneja candidatos y potfiles

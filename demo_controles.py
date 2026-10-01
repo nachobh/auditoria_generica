@@ -55,6 +55,9 @@ def resumen():
     otro_acceso = LoginFicticio(OBJETIVO)
     clave_correcta_sin_segundo_factor_autentica = otro_acceso.intentar(OBJETIVO)
     clave_con_segundo_factor_autentica = otro_acceso.intentar(OBJETIVO, segundo_factor=True)
+    cuentas_ficticias = (OBJETIVO, OBJETIVO, CANDIDATOS[6])
+    cuentas_que_reutilizan = sum(hmac.compare_digest(valor, OBJETIVO)
+                                for valor in cuentas_ficticias)
 
     resultado = {
         "candidatos_ficticios": len(CANDIDATOS),
@@ -67,6 +70,7 @@ def resumen():
         "login_bloqueado_tras_tres_fallos": bloqueado,
         "clave_sin_segundo_factor_autentica": clave_correcta_sin_segundo_factor_autentica,
         "clave_con_segundo_factor_autentica": clave_con_segundo_factor_autentica,
+        "cuentas_ficticias_que_reutilizan": cuentas_que_reutilizan,
     }
     try:
         from argon2.low_level import Type, hash_secret_raw
@@ -96,6 +100,7 @@ def main():
     print(f"Login local bloqueado tras tres fallos: {resultado['login_bloqueado_tras_tres_fallos']}")
     print(f"Contraseña sin segundo factor da acceso: {resultado['clave_sin_segundo_factor_autentica']}")
     print(f"Contraseña con segundo factor da acceso: {resultado['clave_con_segundo_factor_autentica']}")
+    print(f"Cuentas ficticias que reutilizan la misma cadena: {resultado['cuentas_ficticias_que_reutilizan']} de 3")
     print("Tiempos ilustrativos de esta máquina; no son una estimación de resistencia.")
 
 

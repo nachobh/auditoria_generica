@@ -62,6 +62,7 @@ MODO_ARG=
 FMTJ_ARG=
 DRY=0
 SI=0
+AMPLIAR=0
 GUARDAR_SECRETOS=0
 SIN_CAL=0
 MAXMIN=0
@@ -116,6 +117,7 @@ Opciones:
   --modo N                     modo hashcat para hash crudo (ej. 0, 1000)
   --formato NOMBRE             formato john si hay duda (auto por defecto)
   --dry-run                    plan sin motores/verificadores ni archivos nuevos
+  --ampliar                    añade PIN cortos y variantes de listas propias
   --guardar-secretos           conserva contraseña, potfiles y logs locales
   --yes                        no pregunta: acepta los valores por defecto
   --sin-calibrar               no mide la velocidad (estimaciones aproximadas)
@@ -580,6 +582,23 @@ lista_nivel(){
   esac
 }
 
+preparar_variantes(){
+  local -a semillas=("${WL_CUSTOM[@]}")
+  local personalizada
+  if [ ${#semillas[@]} -eq 0 ]; then
+    personalizada=$(buscar_wl custom.txt || true)
+    [ -n "$personalizada" ] && semillas=("$personalizada")
+  fi
+  if [ ${#semillas[@]} -eq 0 ]; then
+    aviso "--ampliar: usa --wl o wordlists/custom.txt para las variantes; sólo se añadirán máscaras"
+    return 0
+  fi
+  python3 "$SCRIPT_DIR/generar_variantes.py" --salida "$DIR" "${semillas[@]}" >/dev/null || {
+    err "no se pudieron preparar las variantes"
+    return 1
+  }
+}
+
 planificar(){
   JOBS=()
   local nivel wl regla nombre cand lines rl wl_az wl_d wl_c
@@ -607,6 +626,20 @@ planificar(){
         nombre=$(printf '%s' "$nombre" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-48)
         agregar_wl "$nombre" "$cand" "$wl" "$regla"
       done < <(lista_nivel "$nivel")
+    fi
+    if [ "$AMPLIAR" -eq 1 ] && [ "$MOTOR" != externo ]; then
+      if [ "$nivel" -eq 1 ]; then
+        agregar_mascara n1_extra_pin_4d 10000 '?d?d?d?d'
+      elif [ "$nivel" -eq 2 ]; then
+        for nombre in casos anios sufijos_2d prefijos_2d uniones; do
+          wl="$DIR/extra_${nombre}.txt"
+          if [ -s "$wl" ]; then
+            lines=$(wc -l < "$wl")
+            agregar_wl "n2_extra_$nombre" "$lines" "$wl" ""
+          fi
+        done
+        agregar_mascara n2_extra_pin_6d 1000000 '?d?d?d?d?d?d'
+      fi
     fi
     if [ "$nivel" -eq 4 ] && [ "$MOTOR" = hashcat ]; then
       wl_az=$(buscar_wl unkown-azul.txt || true)
@@ -793,7 +826,7 @@ ejecutar(){
 }
 
 verificar(){
-  local p=$1
+  local p=$1 algoritmo=
   case "$FMT" in
     rar|zip|7z)
       if 7z t -p"$p" -y "$RUTA" >/dev/null 2>&1; then
@@ -809,12 +842,21 @@ verificar(){
     externo)
       return 0;;
     raw)
-      case "$MODO" in 0|100|1400) ;; *) return 2;; esac
-      python3 - "$RUTA" "$PASSFILE" "$MODO" <<'PY'
+      case "$MODO" in
+        0) algoritmo=md5;; 100) algoritmo=sha1;; 1400) algoritmo=sha256;;
+      esac
+      if [ -z "$algoritmo" ]; then
+        case "${FMTJ,,}" in
+          raw-md5) algoritmo=md5;; raw-sha1) algoritmo=sha1;;
+          raw-sha256) algoritmo=sha256;;
+        esac
+      fi
+      [ -n "$algoritmo" ] || return 2
+      python3 - "$RUTA" "$PASSFILE" "$algoritmo" <<'PY'
 import hashlib
 import sys
 
-algoritmo = {'0': 'md5', '100': 'sha1', '1400': 'sha256'}[sys.argv[3]]
+algoritmo = sys.argv[3]
 objetivo = open(sys.argv[1], encoding='ascii').read().strip().lower()
 candidato = open(sys.argv[2], 'rb').read()
 sys.exit(0 if hashlib.new(algoritmo, candidato).hexdigest() == objetivo else 1)
@@ -826,7 +868,9 @@ PY
 }
 
 guardar_resultado(){
-  local pass=$1 ver=$2 tmp
+  local pass=$1 ver=$2 tmp fase_publica
+  fase_publica=${FASE%%_*}
+  case "$FASE" in n1_extra_*|n2_extra_*) fase_publica=$FASE;; esac
   tmp=$(mktemp "$DIR/.res.XXXXXX")
   {
     printf 'fecha=%s\n' "$(date -Is)"
@@ -835,7 +879,7 @@ guardar_resultado(){
       printf 'fase=%s\n' "$FASE"
     else
       printf 'objetivo=omitido\n'
-      printf 'fase=%s\n' "${FASE%%_*}"
+      printf 'fase=%s\n' "$fase_publica"
     fi
     printf 'objetivo_id=%s\n' "$OBJ_ID"
     printf 'tipo=%s\n' "$FMT"
@@ -852,7 +896,7 @@ guardar_resultado(){
 }
 
 resumen_final(){
-  local pass ver rc ver_txt
+  local pass ver rc ver_txt fase_publica
   pass=$(cat "$PASSFILE")
   if [ -n "$pass" ]; then
     if [ "$GUARDAR_SECRETOS" -eq 1 ]; then
@@ -860,7 +904,9 @@ resumen_final(){
     else
       ok "CANDIDATO ENCONTRADO (oculto; usa --guardar-secretos sólo en un entorno privado)"
     fi
-    printf '    fase: %s · motor: %s\n' "${FASE%%_*}" "$MOTOR"
+    fase_publica=${FASE%%_*}
+    case "$FASE" in n1_extra_*|n2_extra_*) fase_publica=$FASE;; esac
+    printf '    fase: %s · motor: %s\n' "$fase_publica" "$MOTOR"
     verificar "$pass"
     rc=$?
     case $rc in
@@ -939,6 +985,7 @@ parsear(){
         esac
         shift 2;;
       --dry-run) DRY=1; shift;;
+      --ampliar) AMPLIAR=1; shift;;
       --guardar-secretos) GUARDAR_SECRETOS=1; shift;;
       --yes|-y) SI=1; shift;;
       --sin-calibrar) SIN_CAL=1; shift;;
@@ -976,6 +1023,12 @@ mostrar_plan_seco(){
       done < <(lista_nivel "$nivel")
     else
       printf '  nivel 5: máscaras; tablas rainbow sólo para MD5/SHA1 sin salt\n'
+    fi
+    if [ "$AMPLIAR" -eq 1 ] && [ "$FMT" != externo ]; then
+      case "$nivel" in
+        1) printf '  extra: máscara de PIN de 4 cifras (offline)\n';;
+        2) printf '  extra: cambios de caso, años, dos cifras, uniones y PIN de 6 cifras (offline)\n';;
+      esac
     fi
   done
   printf 'El modo, las velocidades y la compatibilidad se comprueban al ejecutar.\n'
@@ -1042,6 +1095,9 @@ main(){
     exit 1
   fi
   if [ "$MOTOR" = externo ]; then preparar_externo || exit 2; fi
+  if [ "$AMPLIAR" -eq 1 ] && [ "$MOTOR" != externo ] && [ "$NIVEL_DE" -le 2 ] && [ "$NIVEL_HA" -ge 2 ]; then
+    preparar_variantes || exit 1
+  fi
   detectar_formato_john
 
   if [ "$MOTOR" = hashcat ]; then calibrar_hashcat "$MODO"; fi
