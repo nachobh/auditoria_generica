@@ -62,6 +62,7 @@ MODO_ARG=
 FMTJ_ARG=
 DRY=0
 SI=0
+GUARDAR_SECRETOS=0
 SIN_CAL=0
 MAXMIN=0
 WL_ARG=
@@ -81,6 +82,7 @@ TASA_EXT=0
 MEDIDA=0
 declare -A TASA_CACHE=()
 JOBS=()
+declare -A JOB_SKIP=()
 declare -A PISTAS=()
 
 trap 'INT=1' INT
@@ -113,13 +115,14 @@ Opciones:
   --motor auto|hashcat|john    motor principal (por defecto auto)
   --modo N                     modo hashcat para hash crudo (ej. 0, 1000)
   --formato NOMBRE             formato john si hay duda (auto por defecto)
-  --dry-run                    sólo muestra el plan
+  --dry-run                    plan sin motores/verificadores ni archivos nuevos
+  --guardar-secretos           conserva contraseña, potfiles y logs locales
   --yes                        no pregunta: acepta los valores por defecto
   --sin-calibrar               no mide la velocidad (estimaciones aproximadas)
   --max-min N                  omite trabajos estimados en más de N minutos
   --wl A,B,...                 listas propias que sustituyen a los niveles 1 y 2
-  --externo-cmd 'CMD %P'       verificador externo para hash y externo
-                               (%P se sustituye por la contraseña candidata)
+  --externo-cmd 'CMD %F %P'    verificador externo para formato externo
+                               (%P=candidato, %F=fichero; argumentos independientes)
   --rainbow-dir DIR            directorio con tablas .rt para rcrack
   --help                       esta ayuda
 
@@ -266,8 +269,8 @@ detectar_fmt(){
 }
 
 conv(){
-  local cmd=$1 out="$DIR/hash.raw"
-  eval "$cmd" >"$out" 2>"$DIR/conversion.err"
+  local out="$DIR/hash.raw"
+  "$@" >"$out" 2>"$DIR/conversion.err"
   if ! grep -qE '[$:]' "$out"; then
     err "el conversor no produjo un hash válido"
     [ -s "$DIR/conversion.err" ] && sed -n '1,6p' "$DIR/conversion.err" >&2
@@ -289,25 +292,25 @@ convertir(){
   HASHJOHN=$RUTA
   case "$FMT" in
     raw|pre) return 0;;
-    rar) conv "\"$(john_tool rar2john)\" \"\$RUTA\"" ;;
-    zip) conv "\"$(john_tool zip2john)\" \"\$RUTA\"" ;;
+    rar) conv "$(john_tool rar2john)" "$RUTA" ;;
+    zip) conv "$(john_tool zip2john)" "$RUTA" ;;
     7z)
       if perl -MCompress::Raw::Lzma -e1 2>/dev/null; then
-        conv "perl \"$(john_tool 7z2john.pl)\" \"\$RUTA\""
+        conv perl "$(john_tool 7z2john.pl)" "$RUTA"
       else
         PISTAS[7z]="falta libcompress-raw-lzma-perl (sudo apt-get install -y libcompress-raw-lzma-perl)"
         return 1
       fi;;
     pdf)
       if [ -x "$(john_tool pdf2john.pl)" ]; then
-        conv "perl \"$(john_tool pdf2john.pl)\" \"\$RUTA\""
+        conv perl "$(john_tool pdf2john.pl)" "$RUTA"
       else
-        conv "python3 \"$(john_tool pdf2john.py)\" \"\$RUTA\""
+        conv python3 "$(john_tool pdf2john.py)" "$RUTA"
       fi;;
-    keepass) conv "\"$(john_tool keepass2john)\" \"\$RUTA\"" ;;
+    keepass) conv "$(john_tool keepass2john)" "$RUTA" ;;
     office)
       if python3 -c 'import olefile' 2>/dev/null; then
-        conv "python3 \"$(john_tool office2john.py)\" \"\$RUTA\""
+        conv python3 "$(john_tool office2john.py)" "$RUTA"
       else
         PISTAS[office]="falta olefile (sudo apt-get install -y python3-olefile)"
         return 1
@@ -322,7 +325,7 @@ convertir(){
         fi
       fi
       PISTAS[wifi]="sin hcxtools: sólo se puede atacar con john (lento). sudo apt-get install -y aircrack-ng hcxtools"
-      conv "\"$(john_tool wpapcap2john)\" \"\$RUTA\"";;
+      conv "$(john_tool wpapcap2john)" "$RUTA";;
     wifi22000|wifi16800|wifi_hccapx) return 0;;
     externo) return 0;;
     *)
@@ -354,19 +357,8 @@ elegir_modo(){
     wifi_hccapx) MODO=2500; return 0;;
   esac
   if [ "$FMT" = raw ]; then
-    local n
-    n=$(tr -d ' \n\t\r' < "$RUTA" | wc -c)
-    case $n in
-      16) MODO=3000;;
-      40) MODO=100;;
-      64) MODO=1400;;
-      32) MODO=0;;
-      *) MODO=0;;
-    esac
-    if [ "$n" -eq 32 ] && [ "$SI" -eq 0 ] && [ -t 0 ]; then
-      MODO=$(preguntar "Modo hashcat para 32 hex (0=MD5 900=MD4 1000=NTLM 3500=md5^2)" 0)
-    fi
-    return 0
+    err "hash hexadecimal ambiguo: indica --modo (por ejemplo, 0=MD5, 100=SHA1, 1000=NTLM)"
+    return 1
   fi
   local cands n m
   cands=$(identificar_modos)
@@ -397,6 +389,7 @@ elegir_motor(){
   if [ "$MOTOR" = hashcat ]; then
     if [ -z "$MODO" ]; then
       if ! elegir_modo; then
+        [ "$FMT" = raw ] && return 1
         aviso "hashcat no reconoce este hash; se usará john"
         MOTOR=john
       fi
@@ -472,17 +465,32 @@ calibrar_john(){
   return 0
 }
 
+preparar_externo(){
+  EXT_ARGV=()
+  mapfile -d '' -t EXT_ARGV < <(python3 -c 'import shlex,sys; a=shlex.split(sys.argv[1]); sys.exit(2) if a.count("%P") != 1 or not a else sys.stdout.buffer.write(b"\0".join(x.encode() for x in a)+b"\0")' "$EXT_CMD")
+  if [ ${#EXT_ARGV[@]} -eq 0 ]; then
+    err "--externo-cmd requiere una orden válida con %P como argumento independiente"
+    return 1
+  fi
+  local n=0 a
+  for a in "${EXT_ARGV[@]}"; do [ "$a" = '%P' ] && n=$((n+1)); done
+  [ "$n" -eq 1 ] || { err "--externo-cmd requiere un único %P"; return 1; }
+}
+
+ejecutar_externo(){
+  local pw=$1 i
+  local -a argv=("${EXT_ARGV[@]}")
+  for i in "${!argv[@]}"; do
+    [ "${argv[$i]}" = '%P' ] && argv[$i]=$pw
+    [ "${argv[$i]}" = '%F' ] && argv[$i]=$RUTA
+  done
+  timeout 15 "${argv[@]}"
+}
+
 calibrar_externo(){
-  [ "$SIN_CAL" -eq 1 ] && { TASA_EXT=100; return 0; }
-  local i t0 t1 dt n=5
-  t0=$(date +%s%N)
-  for ((i=0;i<n;i++)); do timeout 5 bash -c "${EXT_CMD//%P/x}" >/dev/null 2>&1; done
-  t1=$(date +%s%N)
-  dt=$(( (t1 - t0) / 1000000 ))
-  [ "$dt" -le 0 ] && dt=1
-  TASA_EXT=$(( n * 1000 / dt ))
-  [ "$TASA_EXT" -lt 1 ] && TASA_EXT=1
-  [ "$TASA_EXT" -gt 5000 ] && TASA_EXT=5000
+  # Un verificador puede tener efectos secundarios; no se invoca para calibrarlo.
+  TASA_EXT=100
+  MEDIDA=0
   return 0
 }
 
@@ -496,34 +504,43 @@ tasa_de(){
   esac
 }
 
-cmd_wl(){
-  local wl=$1 regla=$2 c
+agregar_wl(){
+  local nom=$1 cand=$2 wl=$3 regla=$4
   case "$MOTOR" in
     hashcat)
-      c="$HC --force --restore-disable -w 4 -m $MODO --potfile-path $POT -a 0 $HASHHC $wl"
-      [ -n "$regla" ] && c="$c -r $RULES/$regla.rule"
-      printf '%s' "$c";;
+      local -a args=("$HC" --restore-disable -w 2 -m "$MODO" --potfile-path "$POT" -a 0 "$HASHHC" "$wl")
+      [ -n "$regla" ] && args+=(-r "$RULES/$regla.rule")
+      agregar_job "$nom" hashcat "$cand" "${args[@]}";;
     john)
-      c="$JOHN --pot=$JPOT --session=$DIR/ses_$3 --wordlist=$wl"
-      [ -n "$regla" ] && c="$c --rules"
-      [ -n "$FMTJ" ] && c="$c --format=$FMTJ"
-      printf '%s' "$c $HASHJOHN";;
+      local -a args=("$JOHN" "--pot=$JPOT" "--session=$DIR/ses_$nom" "--wordlist=$wl")
+      [ -n "$regla" ] && args+=(--rules)
+      [ -n "$FMTJ" ] && args+=("--format=$FMTJ")
+      args+=("$HASHJOHN")
+      agregar_job "$nom" john "$cand" "${args[@]}";;
     externo)
-      printf '%s' "$wl";;
+      agregar_job "$nom" externo "$cand" "$wl";;
   esac
 }
 
-cmd_mask(){
-  local m=$1
+agregar_mascara(){
+  local nom=$1 cand=$2 m=$3
   case "$MOTOR" in
-    hashcat) printf '%s' "$HC --force --restore-disable -w 4 -m $MODO --potfile-path $POT -a 3 $HASHHC $m";;
-    john) printf '%s' "$JOHN --pot=$JPOT --session=$DIR/ses_$2 --mask=$m ${FMTJ:+--format=$FMTJ} $HASHJOHN";;
-    externo) printf '%s' "";;
+    hashcat) agregar_job "$nom" hashcat "$cand" "$HC" --restore-disable -w 2 -m "$MODO" --potfile-path "$POT" -a 3 "$HASHHC" "$m";;
+    john)
+      local -a args=("$JOHN" "--pot=$JPOT" "--session=$DIR/ses_$nom" "--mask=$m")
+      [ -n "$FMTJ" ] && args+=("--format=$FMTJ")
+      args+=("$HASHJOHN")
+      agregar_job "$nom" john "$cand" "${args[@]}";;
   esac
 }
 
 agregar_job(){
-  JOBS+=("$1|$2|$3|$4")
+  local idx=${#JOBS[@]} name="JOB_CMD_${#JOBS[@]}"
+  JOBS+=("$1|$2|$3")
+  shift 3
+  declare -ag "$name=()"
+  local -n args_ref="$name"
+  args_ref=("$@")
 }
 
 wl_o(){
@@ -565,7 +582,7 @@ lista_nivel(){
 
 planificar(){
   JOBS=()
-  local nivel wl regla nombre cand cmd lines rl wl_az wl_d wl_c
+  local nivel wl regla nombre cand lines rl wl_az wl_d wl_c
   for ((nivel=NIVEL_DE; nivel<=NIVEL_HA; nivel++)); do
     if [ "$nivel" -le 4 ]; then
       while IFS='|' read -r wl regla; do
@@ -588,8 +605,7 @@ planificar(){
         fi
         nombre="n${nivel}_$(basename "$wl" .txt)${regla:+_$regla}"
         nombre=$(printf '%s' "$nombre" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-48)
-        cmd=$(cmd_wl "$wl" "$regla" "$nombre")
-        agregar_job "$nombre" "$MOTOR" "$cand" "$cmd"
+        agregar_wl "$nombre" "$cand" "$wl" "$regla"
       done < <(lista_nivel "$nivel")
     fi
     if [ "$nivel" -eq 4 ] && [ "$MOTOR" = hashcat ]; then
@@ -599,12 +615,12 @@ planificar(){
       if [ -n "$wl_az" ] && [ -n "$wl_d" ]; then
         cand=$(($(wc -l < "$wl_az") * $(wc -l < "$wl_d")))
         agregar_job "n4_comb_azul_x_dias" hashcat "$cand" \
-          "$HC --force --restore-disable -w 4 -m $MODO --potfile-path $POT -a 1 $HASHHC $wl_az $wl_d"
+          "$HC" --restore-disable -w 2 -m "$MODO" --potfile-path "$POT" -a 1 "$HASHHC" "$wl_az" "$wl_d"
       fi
       if [ -n "$wl_c" ]; then
         lines=$(wc -l < "$wl_c")
         agregar_job "n4_hibrido_custom_6digitos" hashcat "$((lines*1000000))" \
-          "$HC --force --restore-disable -w 4 -m $MODO --potfile-path $POT -a 6 $HASHHC $wl_c ?d?d?d?d?d?d"
+          "$HC" --restore-disable -w 2 -m "$MODO" --potfile-path "$POT" -a 6 "$HASHHC" "$wl_c" '?d?d?d?d?d?d'
       fi
     fi
     if [ "$nivel" -eq 5 ]; then
@@ -613,15 +629,13 @@ planificar(){
         if [ "$MOTOR" = externo ]; then continue; fi
         cand=$(keyspace "$msk")
         nom="n5_mascara_$(printf '%s' "$msk" | tr -c 'A-Za-z0-9' '_')"
-        cmd=$(cmd_mask "$msk" "$nom")
-        agregar_job "$nom" "$MOTOR" "$cand" "$cmd"
+        agregar_mascara "$nom" "$cand" "$msk"
         i=$((i+1))
       done
       if [ "$FMT" = raw ] && { [ "$MODO" = 0 ] || [ "$MODO" = 100 ]; }; then
         if ls "$RC_TAB"/*.rt >/dev/null 2>&1 && [ -x "$RC_BIN/rcrack" ]; then
           cand=0
-          agregar_job "n5_rainbow_tablas" rainbow "$cand" \
-            "( cd \"$RC_BIN\" && ./rcrack \"$RC_TAB\"/*.rt -l \"$HASHHC\" )"
+          agregar_job "n5_rainbow_tablas" rainbow "$cand" "$RC_BIN/rcrack" "$RC_TAB"/*.rt -l "$HASHHC"
         fi
       fi
     fi
@@ -637,22 +651,29 @@ imprimir_pistas(){
 }
 
 mostrar_plan(){
-  local i=1 total=0 t nom mot cand cmd ti
+  local i=1 idx=0 total=0 t nom mot cand visible
   printf '\nPlan de ataque (motor: %s%s) — nivel %s\n' "$MOTOR" "${MODO:+, modo $MODO}" "$NIVEL"
   printf '%-3s %-42s %-8s %14s %10s\n' '#' 'trabajo' 'motor' 'candidatos' 'tiempo'
   printf '%s\n' '-----------------------------------------------------------------------'
   for job in "${JOBS[@]}"; do
-    IFS='|' read -r nom mot cand cmd <<<"$job"
+    if [ "${JOB_SKIP[$idx]:-0}" -eq 1 ]; then idx=$((idx+1)); continue; fi
+    IFS='|' read -r nom mot cand <<<"$job"
     t=$(awk -v c="$cand" -v r="$(tasa_de "$mot")" 'BEGIN{ if(r<=0 || c<=0) print -1; else printf "%d", c/r }')
-    [ "$t" -lt 0 ] && t=0
-    total=$((total+t))
-    printf '%-3s %-42s %-8s %14s %10s\n' "$i" "$nom" "$mot" "$cand" "$(fmt_tiempo "$t")"
+    if [ "$t" -lt 0 ]; then
+      visible='?'
+    else
+      total=$((total+t))
+      visible=$(fmt_tiempo "$t")
+    fi
+    printf '%-3s %-42s %-8s %14s %10s\n' "$i" "$nom" "$mot" "$cand" "$visible"
     i=$((i+1))
+    idx=$((idx+1))
   done
   printf '%s\n' '-----------------------------------------------------------------------'
   printf 'Total estimado: %s' "$(fmt_tiempo "$total")"
-  [ ${#JOBS[@]} -eq 0 ] && printf ' (sin trabajos)'
+  [ "$i" -eq 1 ] && printf ' (sin trabajos)'
   printf '\n'
+  printf 'Estimación orientativa; los trabajos con tiempo ? no entran en el total.\n'
   if [ "$MOTOR" = hashcat ]; then
     if [ "$MEDIDA" -eq 1 ]; then
       printf 'Velocidad medida: %s H/s\n' "$TASA_HC"
@@ -678,11 +699,10 @@ tiempo_trabajo(){
 }
 
 bucle_externo(){
-  local wl=$1 pw cmd
+  local wl=$1 pw
   while IFS= read -r pw; do
     [ -z "$pw" ] && continue
-    cmd=${EXT_CMD//%P/$(printf '%q' "$pw")}
-    if timeout 15 bash -c "$cmd" >>"$DIR/externo.log" 2>&1; then
+    if ejecutar_externo "$pw" >>"$DIR/externo.log" 2>&1; then
       printf '%s' "$pw" >"$PASSFILE.tmp"
       mv "$PASSFILE.tmp" "$PASSFILE"
       return 0
@@ -692,7 +712,7 @@ bucle_externo(){
 }
 
 extraer_pass(){
-  local tmp="$PASSFILE.tmp" line pass p
+  local tmp="$PASSFILE.tmp" line pass
   : > "$tmp"
   if [ "$MOTOR" = hashcat ] && [ -s "$POT" ] && [ -n "$MODO" ]; then
     "$HC" -m "$MODO" "$HASHHC" --potfile-path "$POT" --show --outfile-format 2 2>/dev/null | head -1 > "$tmp"
@@ -705,16 +725,6 @@ extraer_pass(){
       printf '%s' "$pass" > "$tmp"
     fi
   fi
-  if [ ! -s "$tmp" ]; then
-    p=$(grep -h -m1 '^plaintext of ' "$DIR"/*.log 2>/dev/null | sed 's/^plaintext of .* is //')
-    if [ -n "$p" ]; then
-      printf '%s' "$p" > "$tmp"
-      if [ -f "$HASHHC" ]; then
-        h=$(head -1 "$HASHHC" | tr -d ' \n')
-        [ -n "$h" ] && printf '%s:%s\n' "$h" "$p" >> "$POT"
-      fi
-    fi
-  fi
   if [ -s "$tmp" ]; then
     mv "$tmp" "$PASSFILE"
     return 0
@@ -723,30 +733,60 @@ extraer_pass(){
   return 1
 }
 
-encontrado(){
-  [ -s "$PASSFILE" ] && return 0
-  [ -s "$POT" ] && extraer_pass && return 0
-  [ -s "$JPOT" ] && extraer_pass && return 0
+extraer_rainbow_pass(){
+  python3 - "$RUTA" "$DIR/n5_rainbow_tablas.log" "$PASSFILE.tmp" "$MODO" <<'PY'
+import hashlib
+import re
+import sys
+
+algoritmo = {'0': 'md5', '100': 'sha1'}.get(sys.argv[4])
+if not algoritmo:
+    sys.exit(1)
+objetivo = open(sys.argv[1], encoding='ascii').read().strip().lower()
+with open(sys.argv[2], encoding='utf-8', errors='replace') as registro:
+    for linea in registro:
+        match = re.fullmatch(r'plaintext of ([0-9a-fA-F]+) is (.*)\n?', linea)
+        if not match or match.group(1).lower() != objetivo:
+            continue
+        candidato = match.group(2).rstrip('\r\n')
+        if hashlib.new(algoritmo, candidato.encode()).hexdigest() == objetivo:
+            with open(sys.argv[3], 'wb') as destino:
+                destino.write(candidato.encode())
+            sys.exit(0)
+sys.exit(1)
+PY
+  if [ -s "$PASSFILE.tmp" ]; then
+    mv "$PASSFILE.tmp" "$PASSFILE"
+    return 0
+  fi
   return 1
 }
 
 ejecutar(){
-  local i=1 nom mot cand cmd
+  local i=1 idx=0 nom mot cand
   for job in "${JOBS[@]}"; do
-    IFS='|' read -r nom mot cand cmd <<<"$job"
+    if [ "${JOB_SKIP[$idx]:-0}" -eq 1 ]; then idx=$((idx+1)); continue; fi
+    IFS='|' read -r nom mot cand <<<"$job"
+    local -n args_ref="JOB_CMD_$idx"
     info "[$i/${#JOBS[@]}] $nom · $mot · ~$(fmt_tiempo "$(tiempo_trabajo "$cand" "$mot")")"
     case "$mot" in
       hashcat|john)
-        eval "$cmd </dev/null" >>"$DIR/$nom.log" 2>&1;;
+        "${args_ref[@]}" </dev/null >>"$DIR/$nom.log" 2>&1;;
       rainbow)
-        eval "$cmd" >>"$DIR/$nom.log" 2>&1;;
+        (cd "$RC_BIN" && "${args_ref[@]}") >>"$DIR/$nom.log" 2>&1;;
       externo)
-        bucle_externo "$cmd" || true;;
+        bucle_externo "${args_ref[0]}" || true;;
     esac
+    if [ "$mot" = rainbow ] && extraer_rainbow_pass; then
+      FASE=$nom
+      MOTOR=rainbow
+      return 0
+    fi
     if [ -s "$PASSFILE" ]; then FASE=$nom; return 0; fi
     if extraer_pass; then FASE=$nom; return 0; fi
     if [ "$INT" -eq 1 ]; then aviso "interrumpido por el usuario"; break; fi
     i=$((i+1))
+    idx=$((idx+1))
   done
   return 1
 }
@@ -764,14 +804,21 @@ verificar(){
       pdfinfo -upw "$p" "$RUTA" >/dev/null 2>&1 && return 0
       return 1;;
     office)
-      case "$(ext_minuscula)" in
-        docx|xlsx|pptx|docm|xlsm|odt|ods|odp)
-          7z t -p"$p" -y "$RUTA" >/dev/null 2>&1 && return 0
-          return 1;;
-        *) return 2;;
-      esac;;
+      return 2;;
     externo)
       return 0;;
+    raw)
+      case "$MODO" in 0|100|1400) ;; *) return 2;; esac
+      python3 - "$RUTA" "$PASSFILE" "$MODO" <<'PY'
+import hashlib
+import sys
+
+algoritmo = {'0': 'md5', '100': 'sha1', '1400': 'sha256'}[sys.argv[3]]
+objetivo = open(sys.argv[1], encoding='ascii').read().strip().lower()
+candidato = open(sys.argv[2], 'rb').read()
+sys.exit(0 if hashlib.new(algoritmo, candidato).hexdigest() == objetivo else 1)
+PY
+      return $?;;
     *)
       return 2;;
   esac
@@ -782,12 +829,22 @@ guardar_resultado(){
   tmp=$(mktemp "$DIR/.res.XXXXXX")
   {
     printf 'fecha=%s\n' "$(date -Is)"
-    printf 'objetivo=%s\n' "$RUTA"
+    if [ "$GUARDAR_SECRETOS" -eq 1 ]; then
+      printf 'objetivo=%s\n' "$RUTA"
+      printf 'fase=%s\n' "$FASE"
+    else
+      printf 'objetivo=omitido\n'
+      printf 'fase=%s\n' "${FASE%%_*}"
+    fi
+    printf 'objetivo_id=%s\n' "$OBJ_ID"
     printf 'tipo=%s\n' "$FMT"
     printf 'motor=%s\n' "$MOTOR"
     printf 'modo=%s\n' "${MODO:-n/a}"
-    printf 'fase=%s\n' "$FASE"
-    printf 'contrasena=%s\n' "$pass"
+    if [ "$GUARDAR_SECRETOS" -eq 1 ]; then
+      printf 'contrasena=%s\n' "$pass"
+    else
+      printf 'contrasena=omitida\n'
+    fi
     printf 'verificacion=%s\n' "$ver"
   } > "$tmp"
   mv "$tmp" "$DIR/resultado.txt"
@@ -797,14 +854,18 @@ resumen_final(){
   local pass ver rc ver_txt
   pass=$(cat "$PASSFILE")
   if [ -n "$pass" ]; then
-    ok "CONTRASEÑA ENCONTRADA: $pass"
-    printf '    fase: %s · motor: %s\n' "$FASE" "$MOTOR"
+    if [ "$GUARDAR_SECRETOS" -eq 1 ]; then
+      ok "CANDIDATO ENCONTRADO: $pass"
+    else
+      ok "CANDIDATO ENCONTRADO (oculto; usa --guardar-secretos sólo en un entorno privado)"
+    fi
+    printf '    fase: %s · motor: %s\n' "${FASE%%_*}" "$MOTOR"
     verificar "$pass"
     rc=$?
     case $rc in
       0) ver="ok"; ver_txt="verificación externa correcta";;
-      1) ver="fallo"; ver_txt="la verificación externa RECHAZA la contraseña";;
-      *) ver="potfile"; ver_txt="sin verificador offline: válida según el potfile del motor";;
+      1) ver="rechazado"; ver_txt="la verificación externa RECHAZA el candidato";;
+      *) ver="motor"; ver_txt="coincidencia según el motor; sin verificación independiente";;
     esac
     printf '    %s\n' "$ver_txt"
     guardar_resultado "$pass" "$ver"
@@ -867,28 +928,62 @@ parsear(){
   while [ $# -gt 0 ]; do
     case "$1" in
       --help|-h) uso; exit 0;;
-      --tipo) TIPO_ARG=$2; shift 2;;
-      --nivel) NIVEL=$2; shift 2;;
-      --motor) MOTOR_ARG=$2; shift 2;;
-      --modo) MODO_ARG=$2; shift 2;;
-      --formato) FMTJ_ARG=$2; shift 2;;
+      --tipo|--nivel|--motor|--modo|--formato|--max-min|--wl|--externo-cmd|--rainbow-dir)
+        [ $# -ge 2 ] && [[ "$2" != --* ]] || { err "falta valor para $1"; exit 2; }
+        case "$1" in
+          --tipo) TIPO_ARG=$2;; --nivel) NIVEL=$2;; --motor) MOTOR_ARG=$2;;
+          --modo) MODO_ARG=$2;; --formato) FMTJ_ARG=$2;;
+          --max-min) MAXMIN=$2;; --wl) WL_ARG=$2;;
+          --externo-cmd) EXT_CMD=$2;; --rainbow-dir) RC_TAB=$2;;
+        esac
+        shift 2;;
       --dry-run) DRY=1; shift;;
+      --guardar-secretos) GUARDAR_SECRETOS=1; shift;;
       --yes|-y) SI=1; shift;;
       --sin-calibrar) SIN_CAL=1; shift;;
-      --max-min) MAXMIN=$2; shift 2;;
-      --wl) WL_ARG=$2; shift 2;;
-      --externo-cmd) EXT_CMD=$2; shift 2;;
-      --rainbow-dir) RC_TAB=$2; shift 2;;
       --) shift; break;;
       -*) err "opción desconocida: $1"; uso; exit 2;;
       *) RUTA=$1; shift;;
     esac
   done
   if [ $# -gt 0 ]; then RUTA=$1; fi
+  [[ "$MAXMIN" =~ ^[0-9]+$ ]] || { err "--max-min debe ser un entero no negativo"; exit 2; }
+  [ "${#MAXMIN}" -le 7 ] || { err "--max-min demasiado grande"; exit 2; }
+  MAXMIN=$((10#$MAXMIN))
+  [ -z "$MODO_ARG" ] || [[ "$MODO_ARG" =~ ^[0-9]+$ ]] || { err "--modo debe ser numérico"; exit 2; }
+  case "$TIPO_ARG" in auto|archivo|office|wifi|hash|externo) ;; *) err "--tipo desconocido: $TIPO_ARG"; exit 2;; esac
+  case "$MOTOR_ARG" in auto|hashcat|john) ;; *) err "--motor desconocido: $MOTOR_ARG"; exit 2;; esac
   parsear_nivel
   WL_CUSTOM=()
   if [ -n "$WL_ARG" ]; then
     IFS=',' read -r -a WL_CUSTOM <<<"$WL_ARG"
+    local wl
+    for wl in "${WL_CUSTOM[@]}"; do
+      [ -f "$wl" ] || { err "lista no encontrada: $wl"; exit 2; }
+      [[ "$wl" != *'|'* && "$wl" != *$'\n'* ]] || { err "ruta de lista no admitida: $wl"; exit 2; }
+    done
+  fi
+}
+
+mostrar_plan_seco(){
+  local nivel wl regla
+  printf 'Plan orientativo (sin motores, verificadores ni archivos nuevos): %s · niveles %s\n' "$FMT" "$NIVEL"
+  for ((nivel=NIVEL_DE; nivel<=NIVEL_HA; nivel++)); do
+    if [ "$nivel" -le 4 ]; then
+      while IFS='|' read -r wl regla; do
+        [ -n "$wl" ] && printf '  nivel %s: %s%s\n' "$nivel" "$(basename "$wl")" "${regla:+ + regla $regla}"
+      done < <(lista_nivel "$nivel")
+    else
+      printf '  nivel 5: máscaras; tablas rainbow sólo para MD5/SHA1 sin salt\n'
+    fi
+  done
+  printf 'El modo, las velocidades y la compatibilidad se comprueban al ejecutar.\n'
+  imprimir_pistas
+}
+
+limpiar_sensibles(){
+  if [ "$GUARDAR_SECRETOS" -eq 0 ] && [ -n "${DIR:-}" ] && [ -d "$DIR" ]; then
+    find "$DIR" -maxdepth 1 -type f ! -name resultado.txt -delete
   fi
 }
 
@@ -901,16 +996,12 @@ main(){
   fi
   if [ ! -f "$RUTA" ]; then err "no existe el fichero: $RUTA"; exit 2; fi
   RUTA=$(readlink -f "$RUTA")
-  mkdir -p "$DIR_BASE"
-  local base
-  base=$(basename "$RUTA" | tr -c 'A-Za-z0-9._-' '_')
-  DIR=$(mktemp -d "$DIR_BASE/$(date +%Y%m%d_%H%M%S)_${base:0:40}.XXXXXX") || exit 2
-  POT="$DIR/hashcat.pot"
-  JPOT="$DIR/john.pot"
-  PASSFILE="$DIR/password.txt"
-  touch "$POT" "$JPOT"
-
+  OBJ_ID=$(python3 -c 'import secrets; print(secrets.token_hex(8))')
   detectar_fmt
+  if [ "$DRY" -eq 1 ]; then
+    mostrar_plan_seco
+    return 0
+  fi
   case "$FMT" in
     office) TIPO=office;;
     wifi*) TIPO=wifi;;
@@ -924,11 +1015,24 @@ main(){
     fi
     if [ -z "$EXT_CMD" ]; then
       err "formato no reconocido: $RUTA"
-      err "define un verificador: --externo-cmd 'herramienta %P' (o prueba --tipo archivo --motor john)"
+      err "define un verificador: --externo-cmd 'herramienta %F %P'"
       exit 2
     fi
   fi
-  info "objetivo: $RUTA · tipo: $FMT · trabajo: $DIR"
+  if ! confirmar "¿Preparar y ejecutar la auditoría?"; then
+    info "cancelado"
+    exit 0
+  fi
+
+  umask 077
+  mkdir -p "$DIR_BASE"
+  DIR=$(mktemp -d "$DIR_BASE/$(date +%Y%m%d_%H%M%S)_objetivo_${OBJ_ID}.XXXXXX") || exit 2
+  trap limpiar_sensibles EXIT
+  POT="$DIR/hashcat.pot"
+  JPOT="$DIR/john.pot"
+  PASSFILE="$DIR/password.txt"
+  touch "$POT" "$JPOT"
+  info "objetivo ID: $OBJ_ID · tipo: $FMT · trabajo: $DIR"
 
   if ! convertir; then
     exit 1
@@ -936,6 +1040,7 @@ main(){
   if ! elegir_motor; then
     exit 1
   fi
+  if [ "$MOTOR" = externo ]; then preparar_externo || exit 2; fi
   detectar_formato_john
 
   if [ "$MOTOR" = hashcat ]; then calibrar_hashcat "$MODO"; fi
@@ -945,29 +1050,28 @@ main(){
   planificar
 
   if [ "$MAXMIN" -gt 0 ]; then
-    local filtrados=() j nom mot cand cmd
+    local j nom mot cand idx=0
     for j in "${JOBS[@]}"; do
-      IFS='|' read -r nom mot cand cmd <<<"$j"
+      IFS='|' read -r nom mot cand <<<"$j"
       if [ "$(tiempo_trabajo "$cand" "$mot")" -gt $((MAXMIN*60)) ]; then
         info "omitido por --max-min: $nom"
-        continue
+        JOB_SKIP[$idx]=1
+      elif [ "$cand" -eq 0 ]; then
+        aviso "--max-min no puede estimar $nom; permanece en el plan"
       fi
-      filtrados+=("$j")
+      idx=$((idx+1))
     done
-    JOBS=("${filtrados[@]}")
   fi
 
   mostrar_plan
-  if [ ${#JOBS[@]} -eq 0 ]; then
+  local activos=0 idx
+  for idx in "${!JOBS[@]}"; do
+    [ "${JOB_SKIP[$idx]:-0}" -eq 0 ] && activos=$((activos+1))
+  done
+  if [ "$activos" -eq 0 ]; then
     err "no hay trabajos que ejecutar"
     exit 1
   fi
-  if [ "$DRY" -eq 1 ]; then exit 0; fi
-  if ! confirmar "¿Ejecutar el plan?"; then
-    info "cancelado"
-    exit 0
-  fi
-
   if ejecutar && [ -s "$PASSFILE" ]; then
     resumen_final
     exit $?

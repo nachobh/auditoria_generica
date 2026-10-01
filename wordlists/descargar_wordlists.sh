@@ -29,10 +29,12 @@ EOF
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --destino) DEST=$2; shift 2;;
+    --destino|--url)
+      [ $# -ge 2 ] && [[ "$2" != --* ]] || { printf 'falta valor para %s\n' "$1" >&2; exit 2; }
+      if [ "$1" = --destino ]; then DEST=$2; else BASE=$2; fi
+      shift 2;;
     --comprobar) COMPROBAR=1; shift;;
     --fuerza) FUERZA=1; shift;;
-    --url) BASE=$2; shift 2;;
     --help|-h) uso; exit 0;;
     -*) printf 'opción desconocida: %s\n' "$1" >&2; exit 2;;
     *) SOLO+=("$1"); shift;;
@@ -40,9 +42,11 @@ while [ $# -gt 0 ]; do
 done
 
 [ -f "$MAN" ] || { printf 'falta %s\n' "$MAN" >&2; exit 2; }
-mkdir -p "$DEST"
-TMPD=$(mktemp -d "$DEST/.wl_tmp.XXXXXX") || exit 2
-trap 'rm -rf "$TMPD"' EXIT
+if [ "$COMPROBAR" -eq 0 ]; then
+  mkdir -p "$DEST"
+  TMPD=$(mktemp -d "$DEST/.wl_tmp.XXXXXX") || exit 2
+  trap 'rm -f "$TMPD/desc" "$TMPD/extraido"; rmdir "$TMPD"' EXIT
+fi
 
 sha_de(){ sha256sum "$1" | cut -d' ' -f1; }
 

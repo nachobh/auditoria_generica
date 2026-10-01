@@ -5,14 +5,24 @@ que va de lo simple a lo complejo, con los wordlists, las reglas de ataque y (op
 RainbowCrack compilable desde la fuente incluida.
 
 > **Uso autorizado.** Este material sirve para auditar sistemas y ficheros propios o
-> para los que tengas autorización expresa por escrito. Las contraseñas que salgan
-> quedan en tus logs locales; no las subas al repositorio.
+> para los que tengas autorización expresa por escrito. Por defecto los candidatos
+> hallados se ocultan y los potfiles y logs se borran al terminar.
+
+Para presentar el proyecto sin credenciales ajenas ni descargas, ejecuta
+`python3 demo_controles.py`. Usa ocho cadenas ficticias definidas en el código;
+no lee archivos privados ni accede a la red. Compara SHA-256 sin sal, SHA-256
+con sal única y PBKDF2-HMAC-SHA256 con 100 000 iteraciones. Si está instalado
+`argon2-cffi`, mide también Argon2id con 19 MiB y dos iteraciones. Incluye una
+tabla precalculada pequeña y un simulador local de límite de intentos y segundo
+factor. Sus tiempos son ilustrativos de esta máquina.
 
 ## Estructura
 
 ```text
 kit-auditoria-claves/
 ├── auditor_generico.sh          script principal (menú guiado o CLI)
+├── demo_controles.py            demo pequeña con datos ficticios
+├── test_kit.py                  pruebas sin credenciales reales
 ├── README.md                    este archivo
 ├── .gitignore                   wordlists descargadas y resultados no se versionan
 ├── wordlists/
@@ -38,7 +48,7 @@ sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
 - **Motor de crackeo:** `hashcat` (GPU) y/o `john`. El script prefiere hashcat y cae a
   john automáticamente. Comprueba que tu john es la variante *jumbo* con
   `command -v zip2john`; si no lo es, instala la jumbo desde <https://www.openwall.com/john/>.
-- **`p7zip-full`** además hace falta para *verificar* la contraseña contra rar/zip/7z/office.
+- **`p7zip-full`** permite verificar candidatos contra rar/zip/7z.
 - **Office:** `python3-olefile` para `office2john.py`.
 - **PDF 7z/LZMA:** `libcompress-raw-lzma-perl` para `7z2john.pl`.
 - **WiFi:** `hcxtools` convierte `.cap/.pcap` al formato `22000` de hashcat; sin él,
@@ -74,10 +84,10 @@ Por línea de comandos:
 ./auditor_generico.sh documento.zip                        # autodetecta
 ./auditor_generico.sh --nivel 1-5 --max-min 120 respaldo.7z
 ./auditor_generico.sh --tipo office --nivel 1-3 informe.xlsx
-./auditor_generico.sh --tipo hash --modo 0 --nivel 5 hash_md5.txt
+./auditor_generico.sh --tipo hash --modo 0 --nivel 5 hash_md5_ficticio.txt
 ./auditor_generico.sh --tipo wifi captura.cap
 ./auditor_generico.sh --motor john --dry-run objetivo.rar   # sólo plan
-./auditor_generico.sh --tipo externo --externo-cmd './verificador.sh %P' fichero.xdf
+./auditor_generico.sh --tipo externo --externo-cmd './verificador.sh %F %P' fichero.xdf
 ```
 
 **Tipos (`--tipo`):** `archivo` (rar/zip/7z/pdf/keepass, autodetecta), `office`,
@@ -91,13 +101,16 @@ Por línea de comandos:
 | 2 | listas comunes con reglas: `days`, `months`, `Most-Popular`, `JWT` (+best66) |
 | 3 | listas grandes con reglas: Merriam-Webster SCRABBLE, SCRABBLE-large, darkc0de |
 | 4 | masivas y combinaciones: Pwdb 10M, rockyou (solo y con best66), azul×días, híbrido lista propia+6 dígitos (si hay lista propia) |
-| 5 | máscaras (`?d?d?d?d?d?d?d?d`, …) y rainbow tables (MD5/SHA1/LM) |
+| 5 | máscaras (`?d?d?d?d?d?d?d?d`, …) y rainbow tables (MD5/SHA1 sin sal) |
 
-Los ataques salen ordenados de rápido a lento, se ejecutan **en secuencia**, se
-**para en cuanto aparece** la contraseña y el resultado se **verifica siempre con
-una herramienta externa** (`7z t`, `7z l`, `pdfinfo`…).
+Los trabajos se ejecutan **en secuencia**. Al aparecer un candidato, se distingue
+entre verificación independiente (`ok`), rechazo (`rechazado`) y coincidencia
+según el motor sin verificación independiente (`motor`). Para Office, hashes
+sueltos y Wi-Fi no se afirma una verificación externa. En particular, `7z t`
+puede comprobar un documento Office normal sin comprobar ninguna clave.
 
-Otras opciones: `--dry-run` (plan sin ejecutar), `--yes` (sin preguntar),
+Otras opciones: `--dry-run` (plan orientativo sin ejecutar motores ni crear
+archivos), `--yes` (sin preguntar), `--guardar-secretos` (conserva salida sensible),
 `--max-min N` (omite trabajos estimados sobre N minutos), `--sin-calibrar`
 (estimaciones sin medir), `--wl lista1,lista2` (sustituye niveles 1-2),
 `--formato NOMBRE` (formato john si hay duda), `--rainbow-dir DIR`.
@@ -106,25 +119,36 @@ Otras opciones: `--dry-run` (plan sin ejecutar), `--yes` (sin preguntar),
 
 ### Formatos no reconocidos (`.xdf`, firmas propias…)
 
-El tipo `externo` necesita un verificador: una orden que reciba la contraseña
-candidata por `%P` y termine con código 0 sólo si es la correcta.
+El tipo `externo` necesita un verificador: una orden que reciba el candidato
+por `%P` y opcionalmente el fichero por `%F`, como **argumentos independientes**,
+y termine con código 0 sólo si es
+correcto. La orden admite comillas, pero no tuberías, variables, redirecciones
+ni expansión de comandos. El tiempo del plan usa una estimación aproximada;
+no se hacen llamadas de calibración al verificador.
 
 ```bash
-./auditor_generico.sh --tipo externo --externo-cmd '/ruta/verificar.sh %P' fichero.xdf
+./auditor_generico.sh --tipo externo --externo-cmd '/ruta/verificar.sh %F %P' fichero.xdf
 ```
 
 Si no existe verificador, ese objetivo no se puede auditar con el kit.
 
 ## Resultados
 
-Cada ejecución crea `~/auditoria_logs/<fecha>_<fichero>.XXXXXX/` con:
+Cada ejecución crea `~/auditoria_logs/<fecha>_objetivo_<id>.XXXXXX/`. Por
+defecto queda únicamente `resultado.txt`, con ID aleatorio, tipo,
+fase general y estado de verificación. No guarda la ruta ni el candidato.
+El directorio se crea privado (`umask 077`).
+
+Con `--guardar-secretos` se conservan, sólo localmente:
 
 - `password.txt` — la contraseña encontrada
-- `resultado.txt` — fecha, objetivo, tipo, motor, modo, fase, contraseña y verificación
+- `resultado.txt` — fecha, objetivo, tipo, motor, modo, fase, candidato y verificación
 - `hashcat.pot` / `john.pot` — potfiles de los motores
 - `*.log` — log de cada trabajo del plan
 
 Queda fuera del repositorio (ver `.gitignore`): **no subas nunca** esos directorios.
+Incluso en el modo predeterminado, el proceso maneja candidatos y potfiles
+temporalmente. Revisa los metadatos antes de compartir un informe.
 
 ## Variables de entorno
 
@@ -144,9 +168,10 @@ También se acepta el nombre antiguo `RC_TABLAS` para las tablas.
 
 No se versiona ninguna lista `.txt`: las doce de abajo se traen con
 `descargar_wordlists.sh` y quedan bajo `wordlists/` (excluidas por `.gitignore`).
-Si tenéis listas propias del equipo, ponedlas en `wordlists/` con el nombre que
-queráis: el script las coge en el nivel 1 sin que se suban al repo (o apuntadlas
-con `--wl`). Origen y `sha256` de todo en `manifest.tsv`, desde
+Si tenéis listas propias del equipo, seleccionadlas con `--wl`. El nombre
+`custom.txt` se usa automáticamente en el nivel 1 si existe. No copies ni
+compartas listas que contengan credenciales reales. Origen y `sha256` de las
+descargas en `manifest.tsv`, desde
 [SecLists](https://github.com/danielmiessler/SecLists):
 
 | archivo | líneas | origen |
@@ -164,7 +189,8 @@ con `--wl`). Origen y `sha256` de todo en `manifest.tsv`, desde
 | Pwdb_top-10000000.txt | 10.000.000 | `Passwords/Common-Credentials/` |
 | rockyou.txt | 14.344.391 | `Passwords/Leaked-Databases/rockyou.txt.tar.gz` |
 
-rockyou llega como `tar.gz` y el script lo extrae a texto plano: si tienes un
+La presentación no necesita estas listas: suman cientos de MB y algunas
+proceden de filtraciones. `rockyou` llega como `tar.gz` y el script lo extrae a texto plano: si tienes un
 fichero `rockyou.txt` que empieza por `rockyou.txt` seguido de bytes nulos, es
 el tarball sin extraer.
 
@@ -192,20 +218,34 @@ MD5/SHA1 crudo.
 
 ## Autocomprobación rápida
 
-Con las wordlists ya descargadas:
+Sin descargar ninguna lista:
 
 ```bash
 bash -n auditor_generico.sh wordlists/descargar_wordlists.sh rainbowcrack/build.sh
+python3 -m unittest -v test_kit
+python3 demo_controles.py
 
 printf 'prueba\n' > /tmp/prueba.txt
-7z a -p'secret' -tzip /tmp/prueba.zip /tmp/prueba.txt
-./auditor_generico.sh --yes --nivel 1 /tmp/prueba.zip
-# esperado: CONTRASEÑA ENCONTRADA: secret y "contenido verificado: 1 ficheros"
+printf 'solo_demo_ficticio_03!\n' > /tmp/demo-lista.txt
+7z a -p'solo_demo_ficticio_03!' -tzip /tmp/prueba.zip /tmp/prueba.txt
+./auditor_generico.sh --yes --nivel 1 --wl /tmp/demo-lista.txt /tmp/prueba.zip
+# esperado: candidato oculto y verificación=ok en resultado.txt
 ```
 
 ## Créditos
 
-- Wordlists: [SecLists](https://github.com/danielmiessler/SecLists) de Daniel Miessler
-  (cada lista conserva la licencia de su origen).
+- Wordlists: [SecLists](https://github.com/danielmiessler/SecLists) de Daniel Miessler.
+  Comprueba la licencia y procedencia de cada lista antes de redistribuirla;
+  el descargador no incorpora sus contenidos al repositorio.
 - Crackeo: hashcat y John the Ripper jumbo (cada uno su licencia).
-- RainbowCrack 1.2, Zhu Shuanglei — `rainbowcrack/disclaimer.txt`.
+- RainbowCrack 1.2, Zhu Shuanglei — `rainbowcrack/disclaimer.txt`. Ese archivo
+  contiene una exención de garantía, pero no aclara por sí solo los derechos
+  de redistribución; compruébalos antes de publicar una copia del código.
+
+## Límites de la demostración
+
+Una contraseña fuerte y única, almacenada con una función adecuada, ofrece
+una resistencia muy distinta de un hash rápido sin sal. Los intentos offline
+contra un hash obtenido y los intentos online contra un inicio de sesión tienen
+límites diferentes. Véanse las guías de [OWASP sobre almacenamiento](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
+y [NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html).

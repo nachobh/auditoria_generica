@@ -1,5 +1,12 @@
 auditoria_logs/
 *.pot
+*.log
+password.txt
+resultado.txt
+hash.raw
+hash.hc
+hash.john
+conversion.err
 __pycache__/
 *.pyc
 wordlists/*.txt
