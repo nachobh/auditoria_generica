@@ -395,7 +395,11 @@ ficticio en una terminal: `python3 ejemplos/web_lab.py`. Sólo escucha en
 
 Para un WordPress propio, sustituye URL, usuario y `--wl` por los autorizados.
 El modo web exige HTTPS fuera de localhost, no sigue redirecciones y limita los
-intentos a 1–5, con una pausa entre ellos. El listado incluido sólo tiene tres
+intentos a 1–5, con una pausa entre ellos. Aunque la lista sea grande, sólo
+prueba sus primeros candidatos válidos hasta alcanzar ese límite. En el menú
+se acepta `~/` en rutas de archivos y, al usar `sudo`, se resuelve al directorio
+del usuario que lo invocó. Las pruebas web no necesitan `sudo`.
+El listado incluido sólo tiene tres
 candidatos ficticios; no contiene credenciales filtradas ni puede garantizar
 encontrar una contraseña real. Un HTTP 200 tras varios fallos tampoco prueba
 que el sitio carezca de protección. Consulta las guías de

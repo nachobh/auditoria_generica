@@ -161,6 +161,20 @@ preguntar(){
   printf '%s' "${r:-$2}"
 }
 
+ruta_guiada(){
+  local ruta=$1 inicio
+  case "$ruta" in
+    '~/'*)
+      inicio=$HOME
+      if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+        inicio=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+      fi
+      [ -n "$inicio" ] || { err "no se pudo localizar el directorio del usuario"; return 2; }
+      printf '%s/%s' "${inicio%/}" "${ruta#\~/}";;
+    *) printf '%s' "$ruta";;
+  esac
+}
+
 confirmar(){
   if [ "$SI" -eq 1 ]; then return 0; fi
   local r
@@ -963,10 +977,10 @@ guia(){
     5) TIPO_ARG=externo;;
     *) err "opción de menú desconocida: $op"; exit 2;;
   esac
-  RUTA=$(preguntar "Ruta del fichero" "")
+  RUTA=$(ruta_guiada "$(preguntar 'Ruta del fichero' '')")
   while [ -z "$RUTA" ] || [ ! -f "$RUTA" ]; do
     err "el fichero no existe"
-    RUTA=$(preguntar "Ruta del fichero" "")
+    RUTA=$(ruta_guiada "$(preguntar 'Ruta del fichero' '')")
   done
   NIVEL=$(preguntar "Niveles (1, 1-3, 1-5)" "1-3")
   MOTOR_ARG=$(preguntar "Motor (auto/hashcat/john)" "auto")
@@ -1000,17 +1014,17 @@ guia_extra(){
       fi;;
     8)
       tipo=zip-conocido
-      parametros+=("$(preguntar 'Ruta del ZIP' "$SCRIPT_DIR/ejemplos/extras/zipcrypto_demo.zip")")
+      parametros+=("$(ruta_guiada "$(preguntar 'Ruta del ZIP' "$SCRIPT_DIR/ejemplos/extras/zipcrypto_demo.zip")")")
       parametros+=(--entrada "$(preguntar 'Nombre de la entrada cifrada' texto_conocido.txt)")
-      parametros+=(--plano "$(preguntar 'Ruta del texto conocido' "$SCRIPT_DIR/ejemplos/extras/texto_conocido.txt")");;
+      parametros+=(--plano "$(ruta_guiada "$(preguntar 'Ruta del texto conocido' "$SCRIPT_DIR/ejemplos/extras/texto_conocido.txt")")");;
     9)
       tipo=pdf-permisos
-      parametros+=("$(preguntar 'Ruta del PDF' "$SCRIPT_DIR/ejemplos/extras/pdf_restringido_demo.pdf")");;
+      parametros+=("$(ruta_guiada "$(preguntar 'Ruta del PDF' "$SCRIPT_DIR/ejemplos/extras/pdf_restringido_demo.pdf")")");;
     10)
       tipo=web-login
       parametros+=(--url "$(preguntar 'URL de wp-login.php' http://127.0.0.1:8769/wp-login.php)")
       parametros+=(--usuario "$(preguntar 'Usuario autorizado' demo)")
-      parametros+=(--wl "$(preguntar 'Lista de candidatos ficticios o autorizados' "$SCRIPT_DIR/ejemplos/candidatos_web_ficticios.txt")")
+      parametros+=(--wl "$(ruta_guiada "$(preguntar 'Lista de candidatos ficticios o autorizados' "$SCRIPT_DIR/ejemplos/candidatos_web_ficticios.txt")")")
       parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-5)' 3)");;
     11)
       tipo=web-sqli
@@ -1020,7 +1034,7 @@ guia_extra(){
       parametros+=(--indicador "$(preguntar 'Texto que identifica el resultado' RESULTADO_FICTICIO)");;
     12)
       tipo=wasm
-      parametros+=("$(preguntar 'Ruta del módulo WASM' "$SCRIPT_DIR/ejemplos/extras/modulo_ficticio.wasm")");;
+      parametros+=("$(ruta_guiada "$(preguntar 'Ruta del módulo WASM' "$SCRIPT_DIR/ejemplos/extras/modulo_ficticio.wasm")")");;
   esac
   if [ "$DRY" -eq 1 ]; then
     accion=plan

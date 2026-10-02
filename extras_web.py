@@ -3,7 +3,9 @@
 
 import argparse
 import http.cookiejar
+import os
 from pathlib import Path
+import pwd
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
@@ -49,18 +51,27 @@ def candidatos(ruta, maximo):
                     return
 
 
+def ruta_lista(ruta):
+    ruta = str(ruta)
+    if ruta.startswith("~/") and os.geteuid() == 0 and os.environ.get("SUDO_USER"):
+        try:
+            return Path(pwd.getpwnam(os.environ["SUDO_USER"]).pw_dir) / ruta[2:]
+        except KeyError as exc:
+            raise ValueError("usuario original de sudo no encontrado") from exc
+    return Path(ruta).expanduser()
+
+
 def login(url, usuario, lista, limite, seco=False, pausa=1):
     validar_url(url)
+    lista = ruta_lista(lista)
     if not 1 <= limite <= 5:
         raise ValueError("--limite-intentos debe estar entre 1 y 5")
     if not usuario or len(usuario) > 64 or "\n" in usuario or "\r" in usuario:
         raise ValueError("indica un usuario válido")
     if not Path(lista).is_file():
         raise ValueError("lista de candidatos no encontrada")
-    if Path(lista).stat().st_size > 1024 * 1024:
-        raise ValueError("lista demasiado grande para esta prueba acotada (máximo 1 MiB)")
     if seco:
-        print(f"Plan: hasta {limite} intentos POST en {url}; sin guardar candidatos")
+        print(f"Plan: hasta {limite} primeros candidatos válidos de la lista en {url}; sin guardar candidatos")
         return 0
     cookies = http.cookiejar.CookieJar()
     opener = build_opener(HTTPCookieProcessor(cookies), SinRedireccion())
