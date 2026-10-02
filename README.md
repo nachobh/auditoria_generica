@@ -27,10 +27,16 @@ kit-auditoria-claves/
 ├── generar_variantes.py         variantes acotadas de semillas autorizadas
 ├── run_captura_wifi.sh          captura WiFi dirigida y configurable
 ├── run_captura_wifi_wps.sh      observación WPS y captura breve de evidencia
+├── extras_wifi.py               bloqueo WPS PIN y adquisición PMKID acotados
+├── extras_archivos.py           ZipCrypto y permisos PDF
+├── extras_web.py                login WordPress y SQLi booleana acotados
+├── extras_wasm.py               inventario estático de módulos WASM
 ├── wifi_capture_utils.py        selección de AP y filtrado WPA 22000
 ├── wps_capture_utils.py         extrae sólo el estado WPS del AP elegido
 ├── test_wifi_capture.py         pruebas con redes y hashes ficticios
 ├── test_wps_capture.py          pruebas de la observación WPS
+├── test_extras.py                pruebas de modos extra sin radio
+├── test_extras_web.py            pruebas del laboratorio web local
 ├── test_kit.py                  pruebas sin credenciales reales
 ├── PRESENTACION.md              guion breve para el equipo
 ├── README.md                    este archivo
@@ -70,6 +76,11 @@ sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
   PIN. El script WPS requiere además `aircrack-ng`, `iw` y modo monitor. Si `wash`
   está instalado en `~/.local/bin/wash`, el script lo encuentra también al usar
   `sudo`, aunque esa carpeta no figure en el `PATH` de root.
+- **ZipCrypto:** `bkcrack` es opcional; [fuente e instalación](https://github.com/kimci86/bkcrack).
+- **PDF con permisos:** `qpdf` es opcional (`sudo apt-get install qpdf`).
+- **PMKID dirigido:** `hcxdumptool` y `hcxpcapngtool`; necesita una interfaz WiFi
+  dedicada, ya que `hcxdumptool` cambia su modo, MAC y canal durante la captura.
+- **Web y WASM:** usan Python estándar y no precisan instalar paquetes nuevos.
 - **Rainbow (nivel 5):** sólo si compilas `rainbowcrack/build.sh`.
 
 ## Puesta en marcha
@@ -297,6 +308,105 @@ temporalmente. Revisa los metadatos antes de compartir un informe.
 
 También se acepta el nombre antiguo `RC_TABLAS` para las tablas.
 
+## Auditorías adicionales
+
+Todos los modos siguientes se invocan desde `auditor_generico.sh`. La ruta
+`/home/ignacia/auditor_generico.sh` es un enlace al mismo archivo. Cada prueba
+recibe su objetivo por parámetro: el repositorio no contiene URL, cuentas,
+BSSID ni contraseñas reales. `--dry-run` valida el plan sin conectarse al objetivo.
+
+| Modo | Prueba | Alcance del resultado |
+|------|--------|-----------------------|
+| `wifi-wps-pin` | `wash` pasivo y hasta 5 intentos con Reaver | Detecta bloqueo o registro WPS; pocos intentos inconclusos no prueban seguridad |
+| `wifi-pmkid` | captura dirigida con `hcxdumptool` y filtro PMKID | sólo algunos AP entregan PMKID; el análisis posterior usa formato `22000` |
+| `zip-conocido` | texto conocido contra ZipCrypto | no afecta a ZIP con AES |
+| `pdf-permisos` | apertura de PDF con restricciones de copia | no elude una contraseña necesaria para abrir el PDF |
+| `web-login` | hasta 5 intentos de login tipo WordPress | no guarda ni imprime candidatos; se detiene ante HTTP 403/429 |
+| `web-sqli` | tres consultas booleanas a un parámetro GET | evidencia diferencial, sujeta a revisión manual; no extrae datos |
+| `wasm` | imports y exports de un módulo binario | inventario estático, no prueba explotación |
+
+### Dos pruebas WiFi
+
+```bash
+./auditor_generico.sh --tipo wifi-wps-pin --interfaz wlan0mon \
+  --bssid 02:11:22:33:44:55 --canal 6 --limite-intentos 3 --dry-run
+sudo ./auditor_generico.sh --tipo wifi-wps-pin --interfaz wlan0mon \
+  --bssid 02:11:22:33:44:55 --canal 6 --limite-intentos 3
+
+./auditor_generico.sh --tipo wifi-pmkid --interfaz wlan0 \
+  --bssid 02:11:22:33:44:55 --canal 6 --segundos 20 --dry-run
+sudo ./auditor_generico.sh --tipo wifi-pmkid --interfaz wlan0 \
+  --bssid 02:11:22:33:44:55 --canal 6 --segundos 20
+```
+
+El primer modo exige una interfaz **ya en modo monitor**; observa WPS antes de
+probar el PIN y no ignora un bloqueo anunciado. La prueba es online y puede
+afectar al AP. El segundo usa la interfaz WiFi directamente, aplica un filtro
+por BSSID, guarda un `.pcapng` privado y entrega sólo PMKID de ese AP en
+`pmkid_objetivo.22000`; indica `--banda 2g|5g` si el canal lo requiere.
+El proceso limita la captura a 32 MiB y suprime la salida de pantalla para
+evitar logs grandes; si alcanza el límite, puede terminar sin PMKID.
+No uses ambos modos sobre la interfaz que sostiene tu conexión de trabajo.
+La vulnerabilidad de WPS PIN y la importancia del bloqueo están descritas por
+[CERT/CC VU#723755](https://www.kb.cert.org/vuls/id/723755/).
+
+### Dos pruebas de archivos
+
+`python3 ejemplos/crear_extras.py` regenera un ZIP ZipCrypto de unos cientos de
+bytes y un PDF restringido de unos 1,4 KB. Todos los contenidos y las claves de
+generación son ficticios. Requiere `7z` y `qpdf` para crear ambos; `--salida DIR`
+permite crear otros ejemplos fuera del repositorio.
+
+```bash
+./auditor_generico.sh --tipo zip-conocido ejemplos/extras/zipcrypto_demo.zip \
+  --entrada texto_conocido.txt --plano ejemplos/extras/texto_conocido.txt --max-seg 120
+./auditor_generico.sh --tipo pdf-permisos ejemplos/extras/pdf_restringido_demo.pdf
+```
+
+El primer caso usa [bkcrack](https://github.com/kimci86/bkcrack) y muestra que
+un ZIP con cifrado heredado puede ceder ante texto conocido sin adivinar la
+contraseña. El segundo ilustra que las restricciones del propietario de un PDF
+dependen del lector y no equivalen a una contraseña de apertura; consulta la
+[documentación de qpdf](https://github.com/qpdf/qpdf/blob/main/manual/encryption.rst).
+
+### Dos pruebas web
+
+Para mostrar ambos casos sin cuentas ni sitios ajenos, arranca el laboratorio
+ficticio en una terminal: `python3 ejemplos/web_lab.py`. Sólo escucha en
+`127.0.0.1:8769`. En otra terminal:
+
+```bash
+./auditor_generico.sh --tipo web-login \
+  --url http://127.0.0.1:8769/wp-login.php --usuario demo \
+  --wl ejemplos/candidatos_web_ficticios.txt --limite-intentos 3
+./auditor_generico.sh --tipo web-sqli \
+  --url http://127.0.0.1:8769/buscar-vulnerable --param q \
+  --valor libro_ficticio --indicador RESULTADO_FICTICIO
+./auditor_generico.sh --tipo web-sqli \
+  --url http://127.0.0.1:8769/buscar-seguro --param q \
+  --valor libro_ficticio --indicador RESULTADO_FICTICIO
+```
+
+Para un WordPress propio, sustituye URL, usuario y `--wl` por los autorizados.
+El modo web exige HTTPS fuera de localhost, no sigue redirecciones y limita los
+intentos a 1–5, con una pausa entre ellos. El listado incluido sólo tiene tres
+candidatos ficticios; no contiene credenciales filtradas ni puede garantizar
+encontrar una contraseña real. Un HTTP 200 tras varios fallos tampoco prueba
+que el sitio carezca de protección. Consulta las guías de
+[WordPress sobre fuerza bruta](https://developer.wordpress.org/advanced-administration/security/brute-force/)
+y [OWASP sobre SQLi](https://wstg.owasp.org/latest/4-Web_Application_Security_Testing/07-Injection/05-SQL_Injection/).
+
+### Chequeo WASM
+
+```bash
+./auditor_generico.sh --tipo wasm ejemplos/extras/modulo_ficticio.wasm
+```
+
+`python3 ejemplos/crear_wasm.py` regenera el módulo ficticio de 44 bytes. El
+chequeo no lo ejecuta: enumera funciones importadas y memoria exportada para
+revisar los permisos que el entorno le concede. El aislamiento y la interacción
+con el host se explican en la [guía de seguridad de WebAssembly](https://webassembly.org/docs/security/).
+
 ## Wordlists
 
 No se versiona ninguna lista `.txt`: las doce de abajo se traen con
@@ -356,7 +466,9 @@ Sin descargar ninguna lista:
 ```bash
 bash -n auditor_generico.sh wordlists/descargar_wordlists.sh rainbowcrack/build.sh
 bash -n run_captura_wifi.sh run_captura_wifi_wps.sh
-python3 -m unittest -v test_kit test_wifi_capture test_wps_capture
+python3 -m unittest -v test_kit test_wifi_capture test_wps_capture test_extras
+# test_extras_web abre un socket local y se ejecuta donde estén permitidos:
+python3 -m unittest -v test_extras_web
 python3 demo_controles.py
 
 printf 'prueba\n' > /tmp/prueba.txt

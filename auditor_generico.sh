@@ -106,6 +106,13 @@ Tipos (--tipo):
   hash     hash suelto (hex 16/32/40/64 o formato $...$)
   externo  formato no reconocido (p.ej. .xdf): usa un verificador externo
   auto     detección por extensión y magia (por defecto)
+  web-login     intentos acotados contra login tipo WordPress (HTTPS o localhost)
+  web-sqli      comparación booleana de un formulario GET (sin extraer datos)
+  zip-conocido  prueba de texto conocido contra ZipCrypto heredado
+  pdf-permisos  restricciones PDF frente a contraseña de apertura
+  wifi-wps-pin  observación WPS + hasta 5 pruebas PIN con Reaver
+  wifi-pmkid    adquisición dirigida de PMKID con hcxdumptool
+  wasm          inventario estático de imports y exports
 
 Niveles (--nivel): 1..5 o rango 1-3 (por defecto 1-3)
   1) probado inmediato          2) diccionarios comunes
@@ -133,6 +140,8 @@ Ejemplos:
   auditor_generico.sh --nivel 1-5 --max-min 240 /ruta/documento.zip
   auditor_generico.sh --tipo externo --externo-cmd '/ruta/verificador.sh %P' fichero.xdf
   auditor_generico.sh --tipo hash --modo 0 --nivel 5 hash_md5.txt
+  auditor_generico.sh --tipo web-login --url https://ejemplo.invalid/wp-login.php --usuario demo --dry-run
+  auditor_generico.sh --tipo zip-conocido ejemplos/extras/zipcrypto_demo.zip --entrada texto_conocido.txt --plano ejemplos/extras/texto_conocido.txt
 
 Variables de entorno (opcional):
   AUDITOR_WORDLISTS        directorio con las wordlists (por defecto ./wordlists)
@@ -1041,7 +1050,43 @@ limpiar_sensibles(){
   fi
 }
 
+despachar_extra(){
+  local tipo= modulo= arg
+  local -a restantes=()
+  while [ $# -gt 0 ]; do
+    if [ "$1" = --tipo ]; then
+      [ $# -ge 2 ] || { err "falta valor para --tipo"; exit 2; }
+      tipo=$2
+      shift 2
+    else
+      restantes+=("$1")
+      shift
+    fi
+  done
+  case "$tipo" in
+    web-login|web-sqli) modulo=extras_web.py;;
+    zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
+    wifi-wps-pin|wifi-pmkid) modulo=extras_wifi.py;;
+    wasm) modulo=extras_wasm.py;;
+    *) return 1;;
+  esac
+  if [ "$tipo" = wasm ]; then
+    exec python3 "$SCRIPT_DIR/$modulo" "${restantes[@]}"
+  else
+    exec python3 "$SCRIPT_DIR/$modulo" "$tipo" "${restantes[@]}"
+  fi
+}
+
 main(){
+  local tipo_extra= i
+  local -a entrada=("$@")
+  for ((i=0; i+1<${#entrada[@]}; i++)); do
+    if [ "${entrada[$i]}" = --tipo ]; then tipo_extra=${entrada[$((i+1))]}; fi
+  done
+  case "$tipo_extra" in
+    web-login|web-sqli|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wasm)
+      despachar_extra "$@";;
+  esac
   parsear "$@"
   if [ -z "$RUTA" ]; then
     if [ "$SI" -eq 1 ]; then uso; exit 2; fi

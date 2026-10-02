@@ -1,0 +1,3 @@
+clave_incorrecta_01!
+otra_clave_ficticia!
+solo_ficticio_01!

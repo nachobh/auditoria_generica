@@ -31,6 +31,20 @@ extrapoles la velocidad de SHA-256 a Argon2id. Evita mostrar el contenido de
 potfiles, listas descargadas, rutas personales o candidatos de una auditoría
 real. Revisa cualquier captura antes de compartirla.
 
+## Demostraciones opcionales
+
+Para ampliar la presentación, `python3 ejemplos/crear_extras.py` regenera
+un ZIP ZipCrypto y un PDF pequeños con datos ficticios. Los comandos de
+`README.md` muestran la debilidad del cifrado ZIP heredado ante texto conocido
+y la diferencia entre permisos PDF y contraseña de apertura.
+
+`python3 ejemplos/web_lab.py` inicia un laboratorio ficticio en
+`127.0.0.1:8769`. Los modos `web-login` y `web-sqli` comparan un formulario
+vulnerable con otro que parametriza la consulta. Detén el laboratorio con
+Ctrl+C al terminar. Para WiFi, muestra `--dry-run` de `wifi-wps-pin` y
+`wifi-pmkid` si no dispones de un AP e interfaz dedicados. El modo `wasm`
+enumera imports y exports de un módulo ficticio sin ejecutarlo.
+
 Referencias: [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html),
 [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)
 y [NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html).
