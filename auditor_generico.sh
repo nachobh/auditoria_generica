@@ -943,14 +943,25 @@ guia(){
   printf '  3) WiFi (captura .cap/.pcap o hash .22000)\n'
   printf '  4) Hash suelto\n'
   printf '  5) Formato no reconocido (.xdf) con verificador externo\n'
+  printf '  6) WiFi: WPS PIN (observación y prueba acotada)\n'
+  printf '  7) WiFi: captura PMKID dirigida\n'
+  printf '  8) ZIP ZipCrypto: ataque de texto conocido\n'
+  printf '  9) PDF: permisos frente a clave de apertura\n'
+  printf ' 10) Web: intentos de acceso tipo WordPress\n'
+  printf ' 11) Web: indicios de inyección SQL booleana\n'
+  printf ' 12) WASM: inventario estático\n'
   local op
   op=$(preguntar "Tipo de objetivo" 1)
   case "$op" in
+    6|7|8|9|10|11|12) guia_extra "$op";;
+  esac
+  case "$op" in
+    1) TIPO_ARG=archivo;;
     2) TIPO_ARG=office;;
     3) TIPO_ARG=wifi;;
     4) TIPO_ARG=hash;;
     5) TIPO_ARG=externo;;
-    *) TIPO_ARG=archivo;;
+    *) err "opción de menú desconocida: $op"; exit 2;;
   esac
   RUTA=$(preguntar "Ruta del fichero" "")
   while [ -z "$RUTA" ] || [ ! -f "$RUTA" ]; do
@@ -966,6 +977,62 @@ guia(){
       EXT_CMD=$(preguntar "Verificador (CMD con %P)" "")
     done
   fi
+}
+
+guia_extra(){
+  local opcion=$1 tipo= accion= valor=
+  local -a parametros=()
+  case "$opcion" in
+    6|7)
+      if [ "$opcion" = 6 ]; then
+        tipo=wifi-wps-pin
+        parametros+=(--interfaz "$(preguntar 'Interfaz ya en modo monitor' wlan0mon)")
+      else
+        tipo=wifi-pmkid
+        parametros+=(--interfaz "$(preguntar 'Interfaz WiFi dedicada' wlan0)")
+      fi
+      parametros+=(--bssid "$(preguntar 'BSSID del AP autorizado' '')")
+      parametros+=(--canal "$(preguntar 'Canal' '')")
+      if [ "$opcion" = 6 ]; then
+        parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos PIN (1-5)' 3)")
+      else
+        parametros+=(--segundos "$(preguntar 'Duración en segundos (5-60)' 30)")
+      fi;;
+    8)
+      tipo=zip-conocido
+      parametros+=("$(preguntar 'Ruta del ZIP' "$SCRIPT_DIR/ejemplos/extras/zipcrypto_demo.zip")")
+      parametros+=(--entrada "$(preguntar 'Nombre de la entrada cifrada' texto_conocido.txt)")
+      parametros+=(--plano "$(preguntar 'Ruta del texto conocido' "$SCRIPT_DIR/ejemplos/extras/texto_conocido.txt")");;
+    9)
+      tipo=pdf-permisos
+      parametros+=("$(preguntar 'Ruta del PDF' "$SCRIPT_DIR/ejemplos/extras/pdf_restringido_demo.pdf")");;
+    10)
+      tipo=web-login
+      parametros+=(--url "$(preguntar 'URL de wp-login.php' http://127.0.0.1:8769/wp-login.php)")
+      parametros+=(--usuario "$(preguntar 'Usuario autorizado' demo)")
+      parametros+=(--wl "$(preguntar 'Lista de candidatos ficticios o autorizados' "$SCRIPT_DIR/ejemplos/candidatos_web_ficticios.txt")")
+      parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-5)' 3)");;
+    11)
+      tipo=web-sqli
+      parametros+=(--url "$(preguntar 'URL del formulario GET' http://127.0.0.1:8769/buscar-vulnerable)")
+      parametros+=(--param "$(preguntar 'Nombre del parámetro' q)")
+      parametros+=(--valor "$(preguntar 'Valor base ficticio' libro_ficticio)")
+      parametros+=(--indicador "$(preguntar 'Texto que identifica el resultado' RESULTADO_FICTICIO)");;
+    12)
+      tipo=wasm
+      parametros+=("$(preguntar 'Ruta del módulo WASM' "$SCRIPT_DIR/ejemplos/extras/modulo_ficticio.wasm")");;
+  esac
+  if [ "$DRY" -eq 1 ]; then
+    accion=plan
+  else
+    accion=$(preguntar 'Acción (plan/prueba)' plan)
+  fi
+  case "$accion" in
+    plan) parametros+=(--dry-run);;
+    prueba) ;;
+    *) err "acción desconocida: $accion"; exit 2;;
+  esac
+  despachar_extra --tipo "$tipo" "${parametros[@]}"
 }
 
 parsear_nivel(){

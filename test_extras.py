@@ -50,6 +50,19 @@ class ExtraTests(unittest.TestCase):
             self.assertEqual(proceso.returncode, 0, proceso.stderr)
             self.assertIn("Plan:", proceso.stdout)
 
+    def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
+        for opcion in range(6, 13):
+            with self.subTest(opcion=opcion):
+                if opcion in (6, 7):
+                    entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
+                else:
+                    entradas = f"{opcion}\n" + "\n" * 6
+                proceso = subprocess.run(["bash", str(AUDITOR)], input=entradas,
+                                         capture_output=True, text=True, timeout=10)
+                self.assertEqual(proceso.returncode, 0, proceso.stderr)
+                self.assertIn("12) WASM: inventario estático", proceso.stdout)
+                self.assertIn("Plan:", proceso.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

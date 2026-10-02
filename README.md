@@ -108,6 +108,12 @@ Modo guiado (menú de tipo de objetivo, ruta y niveles):
 ./auditor_generico.sh
 ```
 
+El menú incluye los siete modos adicionales (opciones 6–12). Cada uno solicita
+sus parámetros y propone **plan** como acción predeterminada, sin enviar
+intentos ni capturar tráfico. Elige **prueba** para ejecutarlo con los límites
+indicados. Los ejemplos de archivos y web aparecen como valores iniciales;
+puedes sustituirlos por objetivos autorizados.
+
 Por línea de comandos:
 
 ```bash
