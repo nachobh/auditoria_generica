@@ -67,7 +67,9 @@ sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
 - **Captura WiFi:** `aircrack-ng`, `iw`, `hcxtools` y un adaptador compatible con
   modo monitor; la captura requiere `sudo`. `--dry-run` sólo necesita Bash.
 - **Observación WPS:** `reaver` aporta `wash`, que lee los anuncios WPS sin probar
-  PIN. El script WPS requiere además `aircrack-ng`, `iw` y modo monitor.
+  PIN. El script WPS requiere además `aircrack-ng`, `iw` y modo monitor. Si `wash`
+  está instalado en `~/.local/bin/wash`, el script lo encuentra también al usar
+  `sudo`, aunque esa carpeta no figure en el `PATH` de root.
 - **Rainbow (nivel 5):** sólo si compilas `rainbowcrack/build.sh`.
 
 ## Puesta en marcha

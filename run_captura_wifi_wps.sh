@@ -85,7 +85,15 @@ if [ "$SECO" -eq 1 ]; then
 fi
 
 [ "$EUID" -eq 0 ] || error "ejecuta la observación con sudo; --dry-run funciona sin root"
-for herramienta in wash airodump-ng iw timeout stdbuf python3; do
+WASH_BIN=$(command -v wash || true)
+if [ -z "$WASH_BIN" ] && [ -n "${SUDO_USER:-}" ]; then
+  casa_sudo=$(getent passwd "$SUDO_USER" | cut -d: -f6 || true)
+  if [ -n "$casa_sudo" ] && [ -x "$casa_sudo/.local/bin/wash" ]; then
+    WASH_BIN="$casa_sudo/.local/bin/wash"
+  fi
+fi
+[ -n "$WASH_BIN" ] || error "falta wash (paquete reaver o instalación en ~/.local/bin/wash)"
+for herramienta in airodump-ng iw timeout stdbuf python3; do
   command -v "$herramienta" >/dev/null 2>&1 || error "falta $herramienta"
 done
 umask 077
@@ -151,7 +159,7 @@ info "observando WPS de $BSSID en canal $CANAL durante ${OBSERVAR_SEG}s"
 # otros SSID/BSSID ni repetir el error de logs de decenas de GB.
 set +e
 ( cd "$RUN_DIR" && timeout --signal=INT --kill-after=3s "$OBSERVAR_SEG" \
-  stdbuf -oL wash -u -i "$MON_IFACE" -c "$CANAL" 2>/dev/null ) | \
+  stdbuf -oL "$WASH_BIN" -u -i "$MON_IFACE" -c "$CANAL" 2>/dev/null ) | \
   python3 "$SCRIPT_DIR/wps_capture_utils.py" --bssid "$BSSID" --canal "$CANAL" \
     >"$RUN_DIR/estado_wps.txt"
 codigos=("${PIPESTATUS[@]}")
@@ -179,7 +187,7 @@ sleep "$CAPTURA_SEG"
 parar_pid "$CAP_PID"; CAP_PID=
 [ -s "$RUN_DIR/wps_evidencia-01.cap" ] || error "no se generó la captura de evidencia"
 set +e
-( cd "$RUN_DIR" && timeout 10s wash -f "$RUN_DIR/wps_evidencia-01.cap" 2>/dev/null ) | \
+( cd "$RUN_DIR" && timeout 10s "$WASH_BIN" -f "$RUN_DIR/wps_evidencia-01.cap" 2>/dev/null ) | \
   python3 "$SCRIPT_DIR/wps_capture_utils.py" --bssid "$BSSID" --canal "$CANAL" \
     >"$RUN_DIR/wps_captura.txt"
 verificacion=("${PIPESTATUS[@]}")
