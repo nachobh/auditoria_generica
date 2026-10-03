@@ -6,9 +6,10 @@ SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
 HC="${AUDITOR_HASHCAT:-}"
-[ -x "$HC" ] || HC=$(command -v hashcat 2>/dev/null)
+[ -x "$HC" ] || HC="$HOME/.local/share/hashcat-7.1.2/hashcat"
+[ -x "$HC" ] || HC="/home/ignacia/.local/share/hashcat-7.1.2/hashcat"
 [ -x "$HC" ] || HC="$HOME/.hermes/cache/scratch/hc712/hashcat-7.1.2/hashcat"
-[ -x "$HC" ] || HC="/home/ignacia/.hermes/cache/scratch/hc712/hashcat-7.1.2/hashcat"
+[ -x "$HC" ] || HC=$(command -v hashcat 2>/dev/null)
 HC_DIR=$(dirname -- "$HC")
 RULES="${AUDITOR_RULES:-$HC_DIR/rules}"
 [ -d "$RULES" ] || RULES=/usr/share/hashcat/rules
@@ -495,7 +496,7 @@ calibrar_hashcat(){
     MEDIDA=${TASA_CACHE[$k]##* }
     return 0
   fi
-  out=$(timeout 300 "$HC" -b -m "$1" 2>/dev/null)
+  out=$(timeout 300 "$HC" -b -w 4 -m "$1" 2>/dev/null)
   val=$(printf '%s\n' "$out" | awk '/Speed\.#/{for(i=1;i<=NF;i++){ if($i ~ /^[0-9]+\.?[0-9]*$/ && $(i+1) ~ /^(k|M|G)?H\/s$/){u=$(i+1); v=$i+0; if(u ~ /^k/) v=v*1000; else if(u ~ /^M/) v=v*1000000; else if(u ~ /^G/) v=v*1000000000; printf "%d", v; exit}}}')
   if [ -n "$val" ] && [ "$val" -gt 0 ]; then
     med=1
@@ -578,7 +579,7 @@ agregar_wl(){
   local nom=$1 cand=$2 wl=$3 regla=$4
   case "$MOTOR" in
     hashcat)
-      local -a args=("$HC" --restore-disable -w 2 -m "$MODO" --potfile-path "$POT" -a 0 "$HASHHC" "$wl")
+      local -a args=("$HC" --restore-disable -w 4 -m "$MODO" --potfile-path "$POT" -a 0 "$HASHHC" "$wl")
       [ -n "$regla" ] && args+=(-r "$RULES/$regla.rule")
       agregar_job "$nom" hashcat "$cand" "${args[@]}";;
     john)
@@ -595,7 +596,7 @@ agregar_wl(){
 agregar_mascara(){
   local nom=$1 cand=$2 m=$3
   case "$MOTOR" in
-    hashcat) agregar_job "$nom" hashcat "$cand" "$HC" --restore-disable -w 2 -m "$MODO" --potfile-path "$POT" -a 3 "$HASHHC" "$m";;
+    hashcat) agregar_job "$nom" hashcat "$cand" "$HC" --restore-disable -w 4 -m "$MODO" --potfile-path "$POT" -a 3 "$HASHHC" "$m";;
     john)
       local -a args=("$JOHN" "--pot=$JPOT" "--session=$DIR/ses_$nom" "--mask=$m")
       [ -n "$FMTJ" ] && args+=("--format=$FMTJ")
@@ -716,12 +717,12 @@ planificar(){
       if [ -n "$wl_az" ] && [ -n "$wl_d" ]; then
         cand=$(($(wc -l < "$wl_az") * $(wc -l < "$wl_d")))
         agregar_job "n4_comb_azul_x_dias" hashcat "$cand" \
-          "$HC" --restore-disable -w 2 -m "$MODO" --potfile-path "$POT" -a 1 "$HASHHC" "$wl_az" "$wl_d"
+          "$HC" --restore-disable -w 4 -m "$MODO" --potfile-path "$POT" -a 1 "$HASHHC" "$wl_az" "$wl_d"
       fi
       if [ -n "$wl_c" ]; then
         lines=$(wc -l < "$wl_c")
         agregar_job "n4_hibrido_custom_6digitos" hashcat "$((lines*1000000))" \
-          "$HC" --restore-disable -w 2 -m "$MODO" --potfile-path "$POT" -a 6 "$HASHHC" "$wl_c" '?d?d?d?d?d?d'
+          "$HC" --restore-disable -w 4 -m "$MODO" --potfile-path "$POT" -a 6 "$HASHHC" "$wl_c" '?d?d?d?d?d?d'
       fi
     fi
     if [ "$nivel" -eq 5 ]; then

@@ -69,6 +69,26 @@ sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
 - **Motor de crackeo:** `hashcat` (GPU) y/o `john`. El script prefiere hashcat y cae a
   john automáticamente. Comprueba que tu john es la variante *jumbo* con
   `command -v zip2john`; si no lo es, instala la jumbo desde <https://www.openwall.com/john/>.
+- **GPU en AMD/ROCm:** el `hashcat` de apt sólo ve el backend OpenCL de CPU
+  (pocl); la GPU necesita el binario HIP 7.1.2 de <https://hashcat.net/hashcat/>
+  (`.7z` → `hashcat.bin` renombrado a `hashcat`) y `LD_LIBRARY_PATH=/opt/rocm/lib`,
+  que el script exporta solo. El script busca el binario GPU en
+  `AUDITOR_HASHCAT` → `~/.local/share/hashcat-7.1.2/hashcat` → scratch → apt.
+  Instalación única:
+
+  ```bash
+  mkdir -p ~/.local/share && cd /tmp
+  curl -LO https://hashcat.net/files/hashcat-7.1.2.7z
+  7z x -y hashcat-7.1.2.7z && cp hashcat-7.1.2/hashcat.bin hashcat-7.1.2/hashcat
+  chmod +x hashcat-7.1.2/hashcat && mv hashcat-7.1.2 ~/.local/share/
+  LD_LIBRARY_PATH=/opt/rocm/lib ~/.local/share/hashcat-7.1.2/hashcat -I | grep -i hip
+  ```
+
+  Con la GPU activa, `hashcat -b -m 0` marca `Device #01: AMD Radeon 8060S…`
+  a ~9000 MH/s frente a ~2000 MH/s del CPU. El script usa `-w 4` (workload
+  alto) en ataques y calibración; la calibración mide con el mismo `-w 4`
+  que los trabajos, así que priorizar GPU es automático: el motor más rápido
+  gana la calibración.
 - **`p7zip-full`** permite verificar candidatos contra rar/zip/7z.
 - **Office:** `python3-olefile` para `office2john.py`.
 - **PDF 7z/LZMA:** `libcompress-raw-lzma-perl` para `7z2john.pl`.
