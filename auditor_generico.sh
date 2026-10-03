@@ -775,12 +775,19 @@ extraer_pass(){
     [ -n "$line" ] && printf '%s' "$line" > "$tmp"
   fi
   if [ ! -s "$tmp" ] && [ -s "$JPOT" ]; then
-    line=$("$JOHN" --show --pot="$JPOT" ${FMTJ:+--format="$FMTJ"} "$HASHJOHN" 2>/dev/null | grep -v 'password hashes' | head -1)
-    if [ -n "$line" ]; then
-      pass=${line#*:}
-      pass=${pass%%:*}
-      printf '%s' "$pass" > "$tmp"
-    fi
+    # El pot de john es "hash:contrasena"; la contrasena puede contener dos puntos,
+    # así que se corta sólo en el primero (el hash nunca los lleva).
+    python3 - "$JPOT" "$tmp" <<'PY'
+import sys
+ruta_pot, destino = sys.argv[1], sys.argv[2]
+with open(ruta_pot, 'rb') as archivo:
+    for linea in archivo:
+        if b':' in linea:
+            with open(destino, 'wb') as salida:
+                salida.write(linea.split(b':', 1)[1].rstrip(b'\r\n'))
+            sys.exit(0)
+sys.exit(1)
+PY
   fi
   if [ -s "$tmp" ]; then
     mv "$tmp" "$PASSFILE"
