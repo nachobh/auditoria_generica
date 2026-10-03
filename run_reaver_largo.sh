@@ -84,6 +84,10 @@ if [ -z "$SALIDA_DIR" ]; then
   SALIDA_DIR="$casa/capturas_wifi/reaver_${BSSID//[:]/_}"
 fi
 mkdir -p "$SALIDA_DIR" && chmod 700 "$SALIDA_DIR"
+# bajo sudo, ceder la propiedad al usuario que lo invocó
+if [ -n "${SUDO_UID:-}" ] && [ -n "${SUDO_GID:-}" ]; then
+  chown "$SUDO_UID:$SUDO_GID" "$SALIDA_DIR"
+fi
 # reaver guarda el progreso como <BSSID>.wps en su directorio de trabajo
 SESION_DEFAULT="$SALIDA_DIR/${BSSID}.wps"
 [ -n "$SESION" ] || SESION="$SESION_DEFAULT"
