@@ -181,7 +181,12 @@ def pmkid(interfaz, bssid, canal, banda=None, segundos=30, salida=None, seco=Fal
 
 
 def wps_scan(interfaz, canal=None, segundos=20, seco=False):
-    """Escaneo pasivo de objetivos WPS: lista APs con WPS y si anuncian bloqueo."""
+    """Escaneo pasivo de objetivos WPS: lista APs con WPS y si anuncian bloqueo.
+
+    Método principal: captura con airodump-ng y analiza el pcap con wash -f.
+    En chips como el mt7925, wash en vivo no ve los beacons; el análisis
+    offline funciona de forma fiable. Sin airodump-ng se usa wash en vivo.
+    """
     if not IFACE.fullmatch(interfaz):
         raise ValueError("interfaz inválida")
     if canal is not None and not 1 <= canal <= 233:
@@ -195,18 +200,37 @@ def wps_scan(interfaz, canal=None, segundos=20, seco=False):
     if os.geteuid() != 0:
         raise ValueError("requiere sudo e interfaz ya en modo monitor")
     wash = binario("wash")
-    orden = [wash, "-u", "-a", "-i", interfaz]
-    if canal:
-        orden += ["-c", str(canal)]
     os.umask(0o077)
+    filas = []
     with tempfile.TemporaryDirectory(prefix="wps_scan_") as temporal:
-        try:
-            exploracion = subprocess.run(orden, capture_output=True, timeout=segundos,
+        airodump = shutil.which("airodump-ng")
+        if airodump:
+            base = Path(temporal) / "wps_scan"
+            orden_cap = [airodump, "-w", str(base), "--output-format", "pcap"]
+            orden_cap += (["-c", str(canal)] if canal else ["--band", "bg"])
+            orden_cap.append(interfaz)
+            subprocess.run(["timeout", "--signal=INT", "--kill-after=3s",
+                            str(segundos), *orden_cap],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           check=False)
+            cap = Path(str(base) + "-01.cap")
+            if cap.is_file() and cap.stat().st_size > 24:
+                offline = subprocess.run([wash, "-f", str(cap), "-a"],
+                                         capture_output=True, timeout=120,
                                          check=False, cwd=temporal)
-            texto = exploracion.stdout.decode(errors="replace")
-        except subprocess.TimeoutExpired as exc:
-            texto = (exc.stdout or b"").decode(errors="replace")
-    filas = lista_wps(texto.splitlines())
+                filas = lista_wps(offline.stdout.decode(errors="replace").splitlines())
+        else:
+            orden = [wash, "-u", "-a", "-i", interfaz]
+            if canal:
+                orden += ["-c", str(canal)]
+            try:
+                exploracion = subprocess.run(orden, capture_output=True,
+                                             timeout=segundos, check=False,
+                                             cwd=temporal)
+                texto = exploracion.stdout.decode(errors="replace")
+            except subprocess.TimeoutExpired as exc:
+                texto = (exc.stdout or b"").decode(errors="replace")
+            filas = lista_wps(texto.splitlines())
     if not filas:
         print("Sin APs con WPS observados; el escaneo no demuestra ausencia de WPS")
         return 1
