@@ -54,11 +54,56 @@ class ExtraTests(unittest.TestCase):
             self.assertEqual(proceso.returncode, 0, proceso.stderr)
             self.assertIn("Plan:", proceso.stdout)
 
+    def test_deauth_y_wps_scan_dry_run(self):
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--tipo", "wifi-deauth", "--interfaz", "wlan0mon",
+             "--bssid", "02:11:22:33:44:55", "--cliente", "02:aa:bb:cc:dd:ee",
+             "--golpes", "10", "--dry-run"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("aireplay-ng --deauth 10 -a 02:11:22:33:44:55 -c 02:AA:BB:CC:DD:EE",
+                      proceso.stdout)
+        self.assertIn("4-way handshake", proceso.stdout)
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--tipo", "wifi-wps-scan", "--interfaz", "wlan0mon",
+             "--dry-run"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("wash pasivo", proceso.stdout)
+
+    def test_deauth_rechaza_mac_invalida(self):
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--tipo", "wifi-deauth", "--interfaz", "wlan0mon",
+             "--bssid", "02:11:22:33:44:55", "--cliente", "no-es-mac", "--dry-run"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proceso.returncode, 2)
+        self.assertIn("cliente inválida", proceso.stderr)
+
+    def test_lista_wps_extrae_todos_los_aps(self):
+        from wps_capture_utils import lista_wps
+        muestra = [
+            "BSSID Ch dBm WPS Lck Vendor ESSID\n",
+            "02:11:22:33:44:55 6 -54 2.0 No Ficticio Red de prueba\n",
+            "02:11:22:33:44:66 36 -50 1.0 Yes Ficticio Otra red\n",
+            "basura que no es fila\n",
+        ]
+        self.assertEqual(lista_wps(muestra), [
+            ("02:11:22:33:44:55", 6, "2.0", "No", "Red de prueba"),
+            ("02:11:22:33:44:66", 36, "1.0", "Yes", "Otra red"),
+        ])
+
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
-        for opcion in range(6, 13):
+        for opcion in range(6, 15):
             with self.subTest(opcion=opcion):
                 if opcion in (6, 7):
                     entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
+                elif opcion == 13:
+                    entradas = f"{opcion}\nwlan0mon\n02:11:22:33:44:55\n\n\nplan\n"
+                elif opcion == 14:
+                    entradas = f"{opcion}\nwlan0mon\n\n\nplan\n"
                 else:
                     entradas = f"{opcion}\n" + "\n" * 6
                 proceso = subprocess.run(["bash", str(AUDITOR)], input=entradas,

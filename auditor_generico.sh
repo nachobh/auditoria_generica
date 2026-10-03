@@ -112,6 +112,8 @@ Tipos (--tipo):
   pdf-permisos  restricciones PDF frente a contraseña de apertura
   wifi-wps-pin  observación WPS + hasta 5 pruebas PIN con Reaver
   wifi-pmkid    adquisición dirigida de PMKID con hcxdumptool
+  wifi-deauth   inyección de desautenticación (aireplay-ng) para forzar el handshake
+  wifi-wps-scan escaneo pasivo de objetivos WPS con wash
   wasm          inventario estático de imports y exports
 
 Niveles (--nivel): 1..5 o rango 1-3 (por defecto 1-3)
@@ -971,10 +973,12 @@ guia(){
   printf ' 10) Web: intentos de acceso tipo WordPress\n'
   printf ' 11) Web: indicios de inyección SQL booleana\n'
   printf ' 12) WASM: inventario estático\n'
+  printf ' 13) WiFi: inyectar desautenticación (forzar handshake)\n'
+  printf ' 14) WiFi: escaneo de objetivos WPS vulnerables\n'
   local op
   op=$(preguntar "Tipo de objetivo" 1)
   case "$op" in
-    6|7|8|9|10|11|12) guia_extra "$op";;
+    6|7|8|9|10|11|12|13|14) guia_extra "$op";;
   esac
   case "$op" in
     1) TIPO_ARG=archivo;;
@@ -1042,6 +1046,19 @@ guia_extra(){
     12)
       tipo=wasm
       parametros+=("$(ruta_guiada "$(preguntar 'Ruta del módulo WASM' "$SCRIPT_DIR/ejemplos/extras/modulo_ficticio.wasm")")");;
+    13)
+      tipo=wifi-deauth
+      parametros+=(--interfaz "$(preguntar 'Interfaz ya en modo monitor' wlan0mon)")
+      parametros+=(--bssid "$(preguntar 'BSSID del AP autorizado' '')")
+      valor=$(preguntar 'MAC del cliente (vacío = todos)' '')
+      [ -n "$valor" ] && parametros+=(--cliente "$valor")
+      parametros+=(--golpes "$(preguntar 'Desautenticaciones a enviar (1-20)' 10)");;
+    14)
+      tipo=wifi-wps-scan
+      parametros+=(--interfaz "$(preguntar 'Interfaz ya en modo monitor' wlan0mon)")
+      valor=$(preguntar 'Canal (vacío = barrido)' '')
+      [ -n "$valor" ] && parametros+=(--canal "$valor")
+      parametros+=(--segundos "$(preguntar 'Segundos de observación (10-120)' 20)");;
   esac
   if [ "$DRY" -eq 1 ]; then
     accion=plan
@@ -1154,7 +1171,7 @@ despachar_extra(){
   case "$tipo" in
     web-login|web-sqli) modulo=extras_web.py;;
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
-    wifi-wps-pin|wifi-pmkid) modulo=extras_wifi.py;;
+    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan) modulo=extras_wifi.py;;
     wasm) modulo=extras_wasm.py;;
     *) return 1;;
   esac
@@ -1172,7 +1189,7 @@ main(){
     if [ "${entrada[$i]}" = --tipo ]; then tipo_extra=${entrada[$((i+1))]}; fi
   done
   case "$tipo_extra" in
-    web-login|web-sqli|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wasm)
+    web-login|web-sqli|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wasm)
       despachar_extra "$@";;
   esac
   parsear "$@"
