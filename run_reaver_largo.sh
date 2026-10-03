@@ -116,6 +116,9 @@ while [ "$ronda" -le "$RONDAS_MAX" ]; do
   [ -f "$SESION" ] && orden+=(-s "$SESION")
   [ "$CANAL" -gt 14 ] && orden+=(-5)
   timeout $(( INTENTOS_RONDA * (RETARDO + 120) + 300 )) "${orden[@]}" >"$log" 2>&1
+  # preservar el progreso de reaver (~/.reaver/<BSSID>.wpc) en nuestra sesión
+  [ -f "$casa_reaver/.reaver/${BSSID}.wpc" ] && \
+    cp -f "$casa_reaver/.reaver/${BSSID}.wpc" "$SESION" 2>/dev/null
   estado=$(analizar "$log")
   case "$estado" in
     ENCONTRADO)
