@@ -143,6 +143,47 @@ def sqli(url, parametro, valor, indicador, seco=False):
     return 1
 
 
+def basic(url, usuario, lista, limite, seco=False, pausa=1):
+    """Fuerza bruta acotada contra autenticación HTTP Basic."""
+    validar_url(url)
+    lista = ruta_lista(lista)
+    if not 1 <= limite <= 20:
+        raise ValueError("--limite-intentos debe estar entre 1 y 20")
+    if not usuario or len(usuario) > 64 or "\n" in usuario or "\r" in usuario:
+        raise ValueError("indica un usuario válido")
+    if not lista.is_file():
+        raise ValueError("lista de candidatos no encontrada")
+    if seco:
+        print(f"Plan: hasta {limite} candidatos contra HTTP Basic de {url} como {usuario}; "
+              "sin guardar candidatos")
+        return 0
+    import base64
+    opener = build_opener(SinRedireccion())
+    hechos = 0
+    for candidato in candidatos(lista, limite):
+        credencial = base64.b64encode(f"{usuario}:{candidato}".encode()).decode()
+        peticion = Request(url, headers={"User-Agent": "kit-auditoria-claves/1.0",
+                                         "Authorization": f"Basic {credencial}"})
+        try:
+            respuesta = opener.open(peticion, timeout=20)
+            estado = respuesta.status
+            respuesta.close()
+        except HTTPError as exc:
+            estado = exc.code
+        except (URLError, TimeoutError) as exc:
+            print(f"Error de conexión en el intento {hechos + 1}; estado desconocido: {exc}")
+            return 3
+        hechos += 1
+        if estado not in {401, 403, 407}:
+            print(f"Acceso HTTP Basic confirmado tras {hechos} intentos; candidato oculto")
+            return 0
+        if hechos < limite:
+            time.sleep(pausa)
+    unidad = "intento" if hechos == 1 else "intentos"
+    print(f"Sin acceso en {hechos} {unidad}; no demuestra que la contraseña sea fuerte")
+    return 1
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="accion", required=True)
@@ -159,10 +200,19 @@ def main():
     sql.add_argument("--valor", required=True)
     sql.add_argument("--indicador", required=True)
     sql.add_argument("--dry-run", action="store_true")
+    bas = sub.add_parser("web-basic")
+    bas.add_argument("--url", required=True)
+    bas.add_argument("--usuario", required=True)
+    bas.add_argument("--wl", default=str(Path(__file__).with_name("ejemplos") /
+                                         "candidatos_web_ficticios.txt"))
+    bas.add_argument("--limite-intentos", type=int, default=3)
+    bas.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     try:
         if args.accion == "web-login":
             return login(args.url, args.usuario, args.wl, args.limite_intentos, args.dry_run)
+        if args.accion == "web-basic":
+            return basic(args.url, args.usuario, args.wl, args.limite_intentos, args.dry_run)
         return sqli(args.url, args.param, args.valor, args.indicador, args.dry_run)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))

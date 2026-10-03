@@ -107,6 +107,7 @@ Tipos (--tipo):
   externo  formato no reconocido (p.ej. .xdf): usa un verificador externo
   auto     detección por extensión y magia (por defecto)
   web-login     intentos acotados contra login tipo WordPress (HTTPS o localhost)
+  web-basic     intentos acotados contra autenticación HTTP Basic (HTTPS o localhost)
   web-sqli      comparación booleana de un formulario GET (sin extraer datos)
   zip-conocido  prueba de texto conocido contra ZipCrypto heredado
   pdf-permisos  restricciones PDF frente a contraseña de apertura
@@ -979,10 +980,11 @@ guia(){
   printf ' 14) WiFi: escaneo de objetivos WPS vulnerables\n'
   printf ' 15) SSH: intentos acotados de contraseña (sshpass)\n'
   printf ' 16) Credenciales: búsqueda de secretos expuestos en ficheros\n'
+  printf ' 17) Web: intentos contra autenticación HTTP Basic\n'
   local op
   op=$(preguntar "Tipo de objetivo" 1)
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16) guia_extra "$op";;
+    6|7|8|9|10|11|12|13|14|15|16|17) guia_extra "$op";;
   esac
   case "$op" in
     1) TIPO_ARG=archivo;;
@@ -1074,6 +1076,12 @@ guia_extra(){
       parametros+=("$(ruta_guiada "$(preguntar 'Ruta a escanear (fichero o carpeta)' "$SCRIPT_DIR/ejemplos")")")
       valor=$(preguntar 'Guardar candidatos en fichero (ruta o vacío)' '')
       [ -n "$valor" ] && parametros+=(--generar "$(ruta_guiada "$valor")");;
+    17)
+      tipo=web-basic
+      parametros+=(--url "$(preguntar 'URL protegida con HTTP Basic' http://127.0.0.1:8769/admin)")
+      parametros+=(--usuario "$(preguntar 'Usuario autorizado' demo)")
+      parametros+=(--wl "$(ruta_guiada "$(preguntar 'Lista de candidatos ficticios o autorizados' "$SCRIPT_DIR/ejemplos/candidatos_web_ficticios.txt")")")
+      parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-20)' 3)");;
   esac
   if [ "$DRY" -eq 1 ]; then
     accion=plan
@@ -1184,7 +1192,7 @@ despachar_extra(){
     fi
   done
   case "$tipo" in
-    web-login|web-sqli) modulo=extras_web.py;;
+    web-login|web-sqli|web-basic) modulo=extras_web.py;;
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
     wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan) modulo=extras_wifi.py;;
     ssh-brute) modulo=extras_ssh.py;;
@@ -1210,7 +1218,7 @@ main(){
     if [ "${entrada[$i]}" = --tipo ]; then tipo_extra=${entrada[$((i+1))]}; fi
   done
   case "$tipo_extra" in
-    web-login|web-sqli|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|ssh-brute|cred-scan|wasm)
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|ssh-brute|cred-scan|wasm)
       despachar_extra "$@";;
   esac
   parsear "$@"

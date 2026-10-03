@@ -150,7 +150,7 @@ class ExtraTests(unittest.TestCase):
                 self.assertEqual(cred_scan(vacio), 1)
 
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
-        for opcion in range(6, 17):
+        for opcion in range(6, 18):
             with self.subTest(opcion=opcion):
                 if opcion in (6, 7):
                     entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
@@ -162,6 +162,8 @@ class ExtraTests(unittest.TestCase):
                     entradas = f"{opcion}\n127.0.0.1\ndemo\n\n3\nplan\n"
                 elif opcion == 16:
                     entradas = f"{opcion}\n{Path(__file__).with_name('ejemplos')}\n\nplan\n"
+                elif opcion == 17:
+                    entradas = f"{opcion}\nhttp://127.0.0.1:9/wp\ndemo\n\n3\nplan\n"
                 else:
                     entradas = f"{opcion}\n" + "\n" * 6
                 proceso = subprocess.run(["bash", str(AUDITOR)], input=entradas,
