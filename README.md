@@ -478,6 +478,16 @@ salida (0700) y lo reanuda solo, así que Ctrl-C o un apagón no pierden lo
 ya probado. Para al encontrar el PIN, al alcanzar `--rondas-max`, o con
 Ctrl-C. El PIN y la PSK quedan en los logs: trátalos como secretos.
 
+**Comportamiento observado en routers Movistar (Broadcom).** Algunos APs no
+anuncian el bloqueo en los beacons pero lo aplican en la práctica: Reaver
+asocia, envía EAPOL-START e identidad WPS, y el router responde con un
+deauth repetido (`[+] Received deauth request` en bucle) sin dejar avanzar
+la transacción PIN. El `wash` del escaneo pasivo marca esos APs como
+`vulnerable` porque el beacon no dice lo contrario: el bloqueo real sólo se
+descubre al intentar el PIN. El script prolongado lo tolera (reintenta tras
+la espera), pero si el bucle de deauth persiste ronda tras ronda, el AP está
+efectivamente cerrado al método PIN y conviene pasar a PMKID/handshake.
+
 
 ### SSH y credenciales
 
