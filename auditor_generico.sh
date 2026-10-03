@@ -114,6 +114,7 @@ Tipos (--tipo):
   wifi-pmkid    adquisición dirigida de PMKID con hcxdumptool
   wifi-deauth   inyección de desautenticación (aireplay-ng) para forzar el handshake
   wifi-wps-scan escaneo pasivo de objetivos WPS con wash
+  ssh-brute     intentos acotados de contraseña SSH con sshpass
   wasm          inventario estático de imports y exports
 
 Niveles (--nivel): 1..5 o rango 1-3 (por defecto 1-3)
@@ -975,10 +976,11 @@ guia(){
   printf ' 12) WASM: inventario estático\n'
   printf ' 13) WiFi: inyectar desautenticación (forzar handshake)\n'
   printf ' 14) WiFi: escaneo de objetivos WPS vulnerables\n'
+  printf ' 15) SSH: intentos acotados de contraseña (sshpass)\n'
   local op
   op=$(preguntar "Tipo de objetivo" 1)
   case "$op" in
-    6|7|8|9|10|11|12|13|14) guia_extra "$op";;
+    6|7|8|9|10|11|12|13|14|15) guia_extra "$op";;
   esac
   case "$op" in
     1) TIPO_ARG=archivo;;
@@ -1059,6 +1061,12 @@ guia_extra(){
       valor=$(preguntar 'Canal (vacío = barrido)' '')
       [ -n "$valor" ] && parametros+=(--canal "$valor")
       parametros+=(--segundos "$(preguntar 'Segundos de observación (10-120)' 20)");;
+    15)
+      tipo=ssh-brute
+      parametros+=(--host "$(preguntar 'Destino SSH (host o host:puerto) autorizado' 127.0.0.1)")
+      parametros+=(--usuario "$(preguntar 'Usuario' demo)")
+      parametros+=(--wl "$(ruta_guiada "$(preguntar 'Lista de candidatos ficticios o autorizados' "$SCRIPT_DIR/ejemplos/candidatos_web_ficticios.txt")")")
+      parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-20)' 3)");;
   esac
   if [ "$DRY" -eq 1 ]; then
     accion=plan
@@ -1172,11 +1180,14 @@ despachar_extra(){
     web-login|web-sqli) modulo=extras_web.py;;
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
     wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan) modulo=extras_wifi.py;;
+    ssh-brute) modulo=extras_ssh.py;;
     wasm) modulo=extras_wasm.py;;
     *) return 1;;
   esac
   if [ "$tipo" = wasm ]; then
     exec python3 "$SCRIPT_DIR/$modulo" "${restantes[@]}"
+  elif [ "$tipo" = ssh-brute ]; then
+    exec python3 "$SCRIPT_DIR/$modulo" ssh-brute "${restantes[@]}"
   else
     exec python3 "$SCRIPT_DIR/$modulo" "$tipo" "${restantes[@]}"
   fi
@@ -1189,7 +1200,7 @@ main(){
     if [ "${entrada[$i]}" = --tipo ]; then tipo_extra=${entrada[$((i+1))]}; fi
   done
   case "$tipo_extra" in
-    web-login|web-sqli|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wasm)
+    web-login|web-sqli|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|ssh-brute|wasm)
       despachar_extra "$@";;
   esac
   parsear "$@"

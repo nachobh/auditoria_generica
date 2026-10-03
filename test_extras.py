@@ -95,8 +95,36 @@ class ExtraTests(unittest.TestCase):
             ("02:11:22:33:44:66", 36, "1.0", "Yes", "Otra red"),
         ])
 
+    def test_ssh_brute_dry_run_y_validaciones(self):
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--tipo", "ssh-brute", "--host", "127.0.0.1:22",
+             "--usuario", "demo", "--dry-run"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("contra demo@127.0.0.1:22", proceso.stdout)
+        for host, error in (("host;mal", "destino inválido"),
+                            ("127.0.0.1", "usuario inválido")):
+            usuario = "demo" if host == "host;mal" else "us;er"
+            proceso = subprocess.run(
+                ["bash", str(AUDITOR), "--tipo", "ssh-brute", "--host", host,
+                 "--usuario", usuario, "--dry-run"],
+                capture_output=True, text=True, timeout=10,
+            )
+            with self.subTest(host=host):
+                self.assertEqual(proceso.returncode, 2)
+                self.assertIn(error, proceso.stderr)
+
+    @unittest.skipUnless(shutil.which("sshpass") and shutil.which("ssh"),
+                         "sshpass/ssh no instalados")
+    def test_ssh_brute_puerto_cerrado_sin_acceso(self):
+        from extras_ssh import ssh_brute
+        lista = Path(__file__).with_name("ejemplos") / "candidatos_web_ficticios.txt"
+        # puerto 1/22 cerrado local: sin acceso, sin cuelgue, código 1 o 3
+        self.assertIn(ssh_brute("127.0.0.1:1", "demo", lista, 1), {1, 3})
+
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
-        for opcion in range(6, 15):
+        for opcion in range(6, 16):
             with self.subTest(opcion=opcion):
                 if opcion in (6, 7):
                     entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
@@ -104,6 +132,8 @@ class ExtraTests(unittest.TestCase):
                     entradas = f"{opcion}\nwlan0mon\n02:11:22:33:44:55\n\n\nplan\n"
                 elif opcion == 14:
                     entradas = f"{opcion}\nwlan0mon\n\n\nplan\n"
+                elif opcion == 15:
+                    entradas = f"{opcion}\n127.0.0.1\ndemo\n\n3\nplan\n"
                 else:
                     entradas = f"{opcion}\n" + "\n" * 6
                 proceso = subprocess.run(["bash", str(AUDITOR)], input=entradas,
