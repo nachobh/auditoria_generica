@@ -123,8 +123,34 @@ class ExtraTests(unittest.TestCase):
         # puerto 1/22 cerrado local: sin acceso, sin cuelgue, código 1 o 3
         self.assertIn(ssh_brute("127.0.0.1:1", "demo", lista, 1), {1, 3})
 
+    def test_cred_scan_detecta_enmascara_y_genera(self):
+        from extras_credenciales import cred_scan, enmascarar
+        self.assertEqual(enmascarar("secreto12"), "se*****12")
+        self.assertEqual(enmascarar("ab"), "a*")
+        with tempfile.TemporaryDirectory() as td:
+            origen = Path(td) / "f"
+            origen.write_text('password = "S3cr3to:Prueba!"\n'
+                              'url: postgres://admin:CoNtr4s3na@db.local/app\n'
+                              'password = changeme\n', encoding="utf-8")
+            salida = io.StringIO()
+            lista = Path(td) / "candidatos.txt"
+            with redirect_stdout(salida):
+                self.assertEqual(cred_scan(origen, str(lista)), 0)
+            texto = salida.getvalue()
+            self.assertIn("password-fichero S3***********a!", texto)
+            self.assertIn("url-credenciales Co******na", texto)
+            self.assertNotIn("S3cr3to:Prueba!", texto)
+            self.assertNotIn("changeme", texto)
+            self.assertEqual(lista.read_text().splitlines(),
+                             ["S3cr3to:Prueba!", "CoNtr4s3na"])
+            vacio = Path(td) / "vacio"
+            vacio.write_text("nada aqui\n")
+            salida = io.StringIO()
+            with redirect_stdout(salida):
+                self.assertEqual(cred_scan(vacio), 1)
+
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
-        for opcion in range(6, 16):
+        for opcion in range(6, 17):
             with self.subTest(opcion=opcion):
                 if opcion in (6, 7):
                     entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
@@ -134,6 +160,8 @@ class ExtraTests(unittest.TestCase):
                     entradas = f"{opcion}\nwlan0mon\n\n\nplan\n"
                 elif opcion == 15:
                     entradas = f"{opcion}\n127.0.0.1\ndemo\n\n3\nplan\n"
+                elif opcion == 16:
+                    entradas = f"{opcion}\n{Path(__file__).with_name('ejemplos')}\n\nplan\n"
                 else:
                     entradas = f"{opcion}\n" + "\n" * 6
                 proceso = subprocess.run(["bash", str(AUDITOR)], input=entradas,
