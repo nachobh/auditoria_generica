@@ -386,6 +386,86 @@ mientras con `airodump-ng` o `hcxdumptool`. Si el kernel rechaza los paquetes
 anunciado) o `bloqueado`, y sugiere el comando `wifi-wps-pin` para los
 candidatos.
 
+### Si wash no ve ningún AP: fixes según la tarjeta
+
+Síntoma: `wash` (en vivo o vía `wps-scan`) responde "Sin APs con WPS
+observados" mientras `airodump-ng` lista perfectamente las redes. No es que
+no haya WPS: es que wash no recibe los beacons. Compruébalo siempre antes de
+concluir:
+
+```bash
+sudo airodump-ng wlp195s0mon   # si ve APs y wash no, el problema es de wash
+```
+
+Fixes en orden, del más genérico al específico:
+
+1. **Análisis offline (método que usa ya `wps-scan` por defecto).** Captura
+   con airodump-ng y analiza el pcap con wash:
+   ```bash
+   sudo timeout 60 airodump-ng --band bg -w /tmp/wps --output-format pcap wlan0mon
+   sudo wash -f /tmp/wps-01.cap -a
+   ```
+   Funciona con cualquier chip cuya interfaz monitor capture beacons, porque
+   wash lee el fichero en vez del driver.
+2. **Desactivar el filtrado de hardware de beacons/probes.** Algunos drivers
+   entregan a los sockets raw sólo los frames "completos" que ellos mismos
+   procesan. Prueba a recargar el módulo con opciones de monitor:
+   ```bash
+   sudo modprobe -r <modulo> && sudo modprobe <modulo>    # reset limpio
+   ```
+   y en ath9k/ath10k: `echo 1 | sudo tee /sys/kernel/debug/ieee80211/phy0/ath/...`
+   según la documentación del driver.
+3. **Interferencia del gestor de red.** `airmon-ng check kill` antes de crear
+   el monitor; un NetworkManager activo puede "comerse" frames de gestión.
+4. **Canal fijo.** Si el barrido no funciona, fija el canal del AP objetivo
+   (`wash -c N`, `airodump-ng -c N`); algunos chips fallan sólo al saltar
+   canales.
+5. **Wash demasiado viejo para el chip.** Wash 1.6 (2011) usa libpcap sobre
+   inyección clásica; para chips WiFi 6/7 (mt7925, BE200…) puede no haber
+   soporte directo. Alternativas: `bully` (lee pcap igual que wash) o el
+   análisis offline del punto 1.
+
+**Caso concreto probado (MediaTek MT7925 / interfaz `wlp195s0`, kernel 6.x,
+driver `mt7925e`):** wash en vivo no ve ningún beacon ni en modo survey ni en
+scan, con o sin NetworkManager, con o sin canal fijo — el driver mt76 no
+entrega los beacons al socket de wash. El análisis offline (punto 1) sí
+funciona: la captura de airodump-ng analizada con `wash -f` detectó los 7 APs
+con WPS de la zona. Por eso `wps-scan` captura con airodump-ng y analiza con
+`wash -f` cuando `airodump-ng` está disponible, y sólo usa wash en vivo como
+último recurso.
+
+### Cuántos intentos PIN hacen falta (Reaver)
+
+El PIN WPS son 8 dígitos, pero el protocolo lo divide en dos mitades con
+checksum: el espacio real es 10⁴ × 10³ = **11 000 PINs** (10 000 de la primera
+mitad + 1 000 de la segunda por cada mitad acertada). De ahí:
+
+| Escenario | Cálculo | Tiempo |
+|-----------|---------|--------|
+| Mejor caso | 1 PIN | segundos |
+| Media (50%) | ~5 500 PINs | con 1 s de retardo ≈ 1,5 h |
+| Peor caso | 11 000 PINs | con 1 s de retardo ≈ 3 h |
+| Con retardo 15 s (común en routers con limitación) | media ~5 500 | **≈ 23 h** |
+| Con bloqueo cada N intentos (lock-delay 5-10 min) | — | días |
+
+Por eso `--limite-intentos` con 3, 5 o incluso 50 intentos casi nunca saca el
+PIN completo: sirve para comprobar que el AP responde a WPS, no para crackear.
+Un ataque real necesita miles de intentos encadenados, y ahí entra el
+script prolongado:
+
+```bash
+sudo ./run_reaver_largo.sh --interfaz wlp195s0mon \
+  --bssid F0:86:20:84:B1:66 --canal 1 \
+  --intentos-ronda 10 --retardo 15 --espera-bloqueo 900 --rondas-max 24
+```
+
+Encadena rondas de `--intentos-ronda` PINs; si el AP anuncia bloqueo espera
+`--espera-bloqueo` segundos y reintenta; si la ronda termina sin nada,
+encadena otra. Guarda el progreso como `<BSSID>.wps` en el directorio de
+salida (0700) y lo reanuda solo, así que Ctrl-C o un apagón no pierden lo
+ya probado. Para al encontrar el PIN, al alcanzar `--rondas-max`, o con
+Ctrl-C. El PIN y la PSK quedan en los logs: trátalos como secretos.
+
 El primer modo exige una interfaz **ya en modo monitor**; observa WPS antes de
 probar el PIN y no ignora un bloqueo anunciado. La prueba es online y puede
 afectar al AP. El segundo usa la interfaz WiFi directamente, aplica un filtro

