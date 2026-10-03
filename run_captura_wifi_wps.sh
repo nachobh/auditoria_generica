@@ -30,8 +30,8 @@ Opciones:
   --interfaz NOMBRE       interfaz WiFi; acepta una ya en modo monitor
   --bssid MAC            AP elegido expresamente
   --canal N              canal del AP (1..233)
-  --observar-seg N       duración de observación WPS (5..120; por defecto 20)
-  --captura-seg N        duración de la captura de evidencia (5..60; por defecto 15)
+  --observar-seg N       duración de observación WPS (5..1200; por defecto 20)
+  --captura-seg N        duración de la captura de evidencia (5..600; por defecto 15)
   --salida DIR           directorio privado de resultados
   --dry-run              muestra el plan sin root, radio ni archivos
   --help                 esta ayuda
@@ -67,8 +67,8 @@ for nombre in CANAL OBSERVAR_SEG CAPTURA_SEG; do
   printf -v "$nombre" '%d' "$((10#$numero))"
 done
 [ "$CANAL" -ge 1 ] && [ "$CANAL" -le 233 ] || error "canal fuera de 1..233"
-[ "$OBSERVAR_SEG" -ge 5 ] && [ "$OBSERVAR_SEG" -le 120 ] || error "observación fuera de 5..120 s"
-[ "$CAPTURA_SEG" -ge 5 ] && [ "$CAPTURA_SEG" -le 60 ] || error "captura fuera de 5..60 s"
+[ "$OBSERVAR_SEG" -ge 5 ] && [ "$OBSERVAR_SEG" -le 1200 ] || error "observación fuera de 5..1200 s"
+[ "$CAPTURA_SEG" -ge 5 ] && [ "$CAPTURA_SEG" -le 600 ] || error "captura fuera de 5..600 s"
 
 if [ -z "$SALIDA_DIR" ]; then
   usuario=${SUDO_USER:-${USER:-root}}

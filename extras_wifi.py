@@ -55,8 +55,8 @@ def binario(nombre):
 
 def wps_pin(interfaz, bssid, canal, intentos=3, seco=False):
     bssid = validar_objetivo(interfaz, bssid, canal)
-    if not 1 <= intentos <= 5:
-        raise ValueError("--limite-intentos debe estar entre 1 y 5")
+    if not 1 <= intentos <= 50:
+        raise ValueError("--limite-intentos debe estar entre 1 y 50")
     if seco:
         print(f"Plan: wash pasivo y hasta {intentos} pruebas WPS PIN en {bssid}, canal {canal}")
         return 0
@@ -86,7 +86,7 @@ def wps_pin(interfaz, bssid, canal, intentos=3, seco=False):
                 orden.append("-5")
             try:
                 subprocess.run(orden, stdout=registro, stderr=subprocess.STDOUT,
-                               timeout=120, check=False, cwd=temporal,
+                               timeout=24 * intentos + 60, check=False, cwd=temporal,
                                preexec_fn=limitar_log)
             except subprocess.TimeoutExpired:
                 print("Límite temporal alcanzado; prueba WPS inconcluyente")
@@ -108,8 +108,8 @@ def pmkid(interfaz, bssid, canal, banda=None, segundos=30, salida=None, seco=Fal
     banda = banda or ("2g" if canal <= 14 else "5g")
     if banda not in {"2g", "5g"}:
         raise ValueError("--banda debe ser 2g o 5g")
-    if not 5 <= segundos <= 60:
-        raise ValueError("--segundos debe estar entre 5 y 60")
+    if not 5 <= segundos <= 600:
+        raise ValueError("--segundos debe estar entre 5 y 600")
     canal_hcx = f"{canal}{'a' if banda == '2g' else 'b'}"
     if seco:
         print(f"Plan: PMKID de {bssid} en {interfaz}, canal {canal_hcx}, {segundos}s")
@@ -186,8 +186,8 @@ def wps_scan(interfaz, canal=None, segundos=20, seco=False):
         raise ValueError("interfaz inválida")
     if canal is not None and not 1 <= canal <= 233:
         raise ValueError("canal fuera de 1..233")
-    if not 10 <= segundos <= 120:
-        raise ValueError("--segundos debe estar entre 10 y 120")
+    if not 10 <= segundos <= 1200:
+        raise ValueError("--segundos debe estar entre 10 y 1200")
     if seco:
         objetivo = f"canal {canal}" if canal else "barrido de canales"
         print(f"Plan: wash pasivo {segundos}s en {interfaz} ({objetivo}); sin enviar paquetes")
@@ -231,8 +231,8 @@ def deauth(interfaz, bssid, cliente=None, golpes=10, seco=False):
         cliente = cliente.upper()
         if not MAC.fullmatch(cliente):
             raise ValueError("MAC de cliente inválida")
-    if not 1 <= golpes <= 20:
-        raise ValueError("--golpes debe estar entre 1 y 20")
+    if not 1 <= golpes <= 200:
+        raise ValueError("--golpes debe estar entre 1 y 200")
     destino = f"al cliente {cliente}" if cliente else "a todos los clientes"
     if seco:
         print(f"Plan: aireplay-ng --deauth {golpes} -a {bssid}"
@@ -249,10 +249,10 @@ def deauth(interfaz, bssid, cliente=None, golpes=10, seco=False):
     os.umask(0o077)
     with tempfile.TemporaryDirectory(prefix="deauth_") as temporal:
         try:
-            proceso = subprocess.run(orden, capture_output=True, timeout=120,
-                                     check=False, cwd=temporal)
+            proceso = subprocess.run(orden, capture_output=True,
+                                     timeout=6 * golpes + 60, check=False, cwd=temporal)
         except subprocess.TimeoutExpired:
-            print("aireplay-ng superó el límite de 120s; inyección inconcluyente")
+            print("aireplay-ng superó su límite temporal; inyección inconcluyente")
             return 3
     resumen = proceso.stdout.decode(errors="replace") + proceso.stderr.decode(errors="replace")
     if "send failed" in resumen.lower():

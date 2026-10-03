@@ -149,6 +149,41 @@ class ExtraTests(unittest.TestCase):
             with redirect_stdout(salida):
                 self.assertEqual(cred_scan(vacio), 1)
 
+    def test_limites_superiores_x10_aceptados_y_rechazados(self):
+        casos_ok = (
+            (["--tipo", "wifi-wps-pin", "--interfaz", "w", "--bssid",
+              "02:11:22:33:44:55", "--canal", "6", "--limite-intentos", "50"], "Plan:"),
+            (["--tipo", "wifi-pmkid", "--interfaz", "w", "--bssid",
+              "02:11:22:33:44:55", "--canal", "6", "--segundos", "600"], "Plan:"),
+            (["--tipo", "wifi-wps-scan", "--interfaz", "w", "--segundos", "1200"], "Plan:"),
+            (["--tipo", "wifi-deauth", "--interfaz", "w", "--bssid",
+              "02:11:22:33:44:55", "--golpes", "200"], "Plan:"),
+            (["--tipo", "ssh-brute", "--host", "127.0.0.1", "--usuario",
+              "demo", "--limite-intentos", "200"], "Plan:"),
+            (["--tipo", "web-login", "--url", "https://e.invalid/wp", "--usuario",
+              "demo", "--limite-intentos", "50"], "Plan:"),
+        )
+        for argumentos, esperado in casos_ok:
+            proceso = subprocess.run(["bash", str(AUDITOR), *argumentos, "--dry-run"],
+                                     capture_output=True, text=True, timeout=10)
+            with self.subTest(argumentos=argumentos[-2:]):
+                self.assertEqual(proceso.returncode, 0, proceso.stderr)
+                self.assertIn(esperado, proceso.stdout)
+        for argumentos in (
+            ["--tipo", "wifi-wps-pin", "--interfaz", "w", "--bssid",
+             "02:11:22:33:44:55", "--canal", "6", "--limite-intentos", "51"],
+            ["--tipo", "wifi-pmkid", "--interfaz", "w", "--bssid",
+             "02:11:22:33:44:55", "--canal", "6", "--segundos", "601"],
+            ["--tipo", "wifi-deauth", "--interfaz", "w", "--bssid",
+             "02:11:22:33:44:55", "--golpes", "201"],
+            ["--tipo", "ssh-brute", "--host", "127.0.0.1", "--usuario",
+             "demo", "--limite-intentos", "201"],
+        ):
+            proceso = subprocess.run(["bash", str(AUDITOR), *argumentos, "--dry-run"],
+                                     capture_output=True, text=True, timeout=10)
+            with self.subTest(argumentos=argumentos[-2:]):
+                self.assertEqual(proceso.returncode, 2)
+
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
         for opcion in range(6, 18):
             with self.subTest(opcion=opcion):

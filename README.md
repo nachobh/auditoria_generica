@@ -325,16 +325,16 @@ BSSID ni contraseñas reales. `--dry-run` valida el plan sin conectarse al objet
 
 | Modo | Prueba | Alcance del resultado |
 |------|--------|-----------------------|
-| `wifi-wps-pin` | `wash` pasivo y hasta 5 intentos con Reaver | Detecta bloqueo o registro WPS; pocos intentos inconclusos no prueban seguridad |
+| `wifi-wps-pin` | `wash` pasivo y hasta 50 intentos con Reaver | Detecta bloqueo o registro WPS; pocos intentos inconclusos no prueban seguridad |
 | `wifi-pmkid` | captura dirigida con `hcxdumptool` y filtro PMKID | sólo algunos AP entregan PMKID; el análisis posterior usa formato `22000` |
 | `wifi-deauth` | `aireplay-ng -0` dirigido al BSSID (y cliente opcional) | desconecta a los clientes para forzar el 4-way handshake; interrumpe el servicio unos segundos |
-| `wifi-wps-scan` | `wash -a` pasivo 10–120 s | lista APs con WPS y si anuncian bloqueo; pasivo, no envía paquetes |
-| `ssh-brute` | hasta 20 intentos de contraseña SSH con `sshpass` | un intento por candidato, `NumberOfPasswordPrompts=1`; se detiene si el servidor limita |
+| `wifi-wps-scan` | `wash -a` pasivo 10–1200 s | lista APs con WPS y si anuncian bloqueo; pasivo, no envía paquetes |
+| `ssh-brute` | hasta 200 intentos de contraseña SSH con `sshpass` | un intento por candidato, `NumberOfPasswordPrompts=1`; se detiene si el servidor limita |
 | `cred-scan` | patrones de secretos en ficheros de texto | salida enmascarada; `--generar` guarda candidatos para otras auditorías |
 | `zip-conocido` | texto conocido contra ZipCrypto | no afecta a ZIP con AES |
 | `pdf-permisos` | apertura de PDF con restricciones de copia | no elude una contraseña necesaria para abrir el PDF |
-| `web-login` | hasta 5 intentos de login tipo WordPress | no guarda ni imprime candidatos; se detiene ante HTTP 403/429 |
-| `web-basic` | hasta 20 intentos contra HTTP Basic | 401/403/407 cuentan como fallo; cualquier otro estado se confirma como acceso |
+| `web-login` | hasta 50 intentos de login tipo WordPress | no guarda ni imprime candidatos; se detiene ante HTTP 403/429 |
+| `web-basic` | hasta 200 intentos contra HTTP Basic | 401/403/407 cuentan como fallo; cualquier otro estado se confirma como acceso |
 | `web-sqli` | tres consultas booleanas a un parámetro GET | evidencia diferencial, sujeta a revisión manual; no extrae datos |
 | `wasm` | imports y exports de un módulo binario | inventario estático, no prueba explotación |
 
@@ -360,7 +360,7 @@ sudo ./auditor_generico.sh --tipo wifi-deauth --interfaz wlan0mon \
 sudo ./auditor_generico.sh --tipo wifi-wps-scan --interfaz wlan0mon --canal 6 --segundos 30
 ```
 
-`wifi-deauth` envía de 1 a 20 desautenticaciones (`aireplay-ng -0 N -a BSSID
+`wifi-deauth` envía de 1 a 200 desautenticaciones (`aireplay-ng -0 N -a BSSID
 [-c CLIENTE]`) a un único AP autorizado: desconecta temporalmente a los
 clientes legítimos y los obliga a rehacer el 4-way handshake, que capturas
 mientras con `airodump-ng` o `hcxdumptool`. Si el kernel rechaza los paquetes
@@ -439,7 +439,7 @@ ficticio en una terminal: `python3 ejemplos/web_lab.py`. Sólo escucha en
 
 Para un WordPress propio, sustituye URL, usuario y `--wl` por los autorizados.
 El modo web exige HTTPS fuera de localhost, no sigue redirecciones y limita los
-intentos a 1–5, con una pausa entre ellos. Aunque la lista sea grande, sólo
+intentos a 1–50 (1–200 en `web-basic`), con una pausa entre ellos. Aunque la lista sea grande, sólo
 prueba sus primeros candidatos válidos hasta alcanzar ese límite. En el menú
 se acepta `~/` en rutas de archivos y, al usar `sudo`, se resuelve al directorio
 del usuario que lo invocó. Las pruebas web no necesitan `sudo`.

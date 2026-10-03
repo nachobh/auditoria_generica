@@ -38,8 +38,8 @@ Opciones:
   --bssid MAC             selecciona un AP concreto; obligatorio para --deauth
   --canal N               escanea sólo ese canal y selecciona su AP (1..233)
   --banda bg|a|abg        bandas del escaneo (por defecto abg)
-  --escaneo-seg N         duración del escaneo (5..120, por defecto 20)
-  --minutos N             duración de captura (1..60, por defecto 10)
+  --escaneo-seg N         duración del escaneo (5..1200, por defecto 20)
+  --minutos N             duración de captura (1..600, por defecto 10)
   --salida DIR            directorio privado de capturas
   --solo-captura          conserva el .cap sin convertirlo a formato 22000
   --deauth N              envía N tandas de desconexión al BSSID explícito (1..3)
@@ -89,8 +89,8 @@ for nombre in CANAL ESCANEO_SEG MINUTOS DEAUTH; do
   fi
 done
 [ -z "$CANAL" ] || { [ "$CANAL" -ge 1 ] && [ "$CANAL" -le 233 ]; } || error "canal fuera de 1..233"
-[ "$ESCANEO_SEG" -ge 5 ] && [ "$ESCANEO_SEG" -le 120 ] || error "escaneo fuera de 5..120 s"
-[ "$MINUTOS" -ge 1 ] && [ "$MINUTOS" -le 60 ] || error "duración fuera de 1..60 min"
+[ "$ESCANEO_SEG" -ge 5 ] && [ "$ESCANEO_SEG" -le 1200 ] || error "escaneo fuera de 5..1200 s"
+[ "$MINUTOS" -ge 1 ] && [ "$MINUTOS" -le 600 ] || error "duración fuera de 1..600 min"
 [ "$DEAUTH" -ge 0 ] && [ "$DEAUTH" -le 3 ] || error "--deauth admite 1..3"
 case "$BANDA" in bg|a|abg) ;; *) error "--banda debe ser bg, a o abg";; esac
 [ "$DEAUTH" -eq 0 ] || [ -n "$BSSID" ] || error "--deauth requiere --bssid explícito"

@@ -64,8 +64,8 @@ def ruta_lista(ruta):
 def login(url, usuario, lista, limite, seco=False, pausa=1):
     validar_url(url)
     lista = ruta_lista(lista)
-    if not 1 <= limite <= 5:
-        raise ValueError("--limite-intentos debe estar entre 1 y 5")
+    if not 1 <= limite <= 50:
+        raise ValueError("--limite-intentos debe estar entre 1 y 50")
     if not usuario or len(usuario) > 64 or "\n" in usuario or "\r" in usuario:
         raise ValueError("indica un usuario válido")
     if not Path(lista).is_file():
@@ -147,8 +147,8 @@ def basic(url, usuario, lista, limite, seco=False, pausa=1):
     """Fuerza bruta acotada contra autenticación HTTP Basic."""
     validar_url(url)
     lista = ruta_lista(lista)
-    if not 1 <= limite <= 20:
-        raise ValueError("--limite-intentos debe estar entre 1 y 20")
+    if not 1 <= limite <= 200:
+        raise ValueError("--limite-intentos debe estar entre 1 y 200")
     if not usuario or len(usuario) > 64 or "\n" in usuario or "\r" in usuario:
         raise ValueError("indica un usuario válido")
     if not lista.is_file():

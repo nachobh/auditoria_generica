@@ -1032,9 +1032,9 @@ guia_extra(){
       parametros+=(--bssid "$(preguntar 'BSSID del AP autorizado' '')")
       parametros+=(--canal "$(preguntar 'Canal' '')")
       if [ "$opcion" = 6 ]; then
-        parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos PIN (1-5)' 3)")
+        parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos PIN (1-50)' 3)")
       else
-        parametros+=(--segundos "$(preguntar 'Duración en segundos (5-60)' 30)")
+        parametros+=(--segundos "$(preguntar 'Duración en segundos (5-600)' 30)")
       fi;;
     8)
       tipo=zip-conocido
@@ -1049,7 +1049,7 @@ guia_extra(){
       parametros+=(--url "$(preguntar 'URL de wp-login.php' http://127.0.0.1:8769/wp-login.php)")
       parametros+=(--usuario "$(preguntar 'Usuario autorizado' demo)")
       parametros+=(--wl "$(ruta_guiada "$(preguntar 'Lista de candidatos ficticios o autorizados' "$SCRIPT_DIR/ejemplos/candidatos_web_ficticios.txt")")")
-      parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-5)' 3)");;
+      parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-50)' 3)");;
     11)
       tipo=web-sqli
       parametros+=(--url "$(preguntar 'URL del formulario GET' http://127.0.0.1:8769/buscar-vulnerable)")
@@ -1065,19 +1065,19 @@ guia_extra(){
       parametros+=(--bssid "$(preguntar 'BSSID del AP autorizado' '')")
       valor=$(preguntar 'MAC del cliente (vacío = todos)' '')
       [ -n "$valor" ] && parametros+=(--cliente "$valor")
-      parametros+=(--golpes "$(preguntar 'Desautenticaciones a enviar (1-20)' 10)");;
+      parametros+=(--golpes "$(preguntar 'Desautenticaciones a enviar (1-200)' 10)");;
     14)
       tipo=wifi-wps-scan
       parametros+=(--interfaz "$(preguntar 'Interfaz ya en modo monitor' wlan0mon)")
       valor=$(preguntar 'Canal (vacío = barrido)' '')
       [ -n "$valor" ] && parametros+=(--canal "$valor")
-      parametros+=(--segundos "$(preguntar 'Segundos de observación (10-120)' 20)");;
+      parametros+=(--segundos "$(preguntar 'Segundos de observación (10-1200)' 20)");;
     15)
       tipo=ssh-brute
       parametros+=(--host "$(preguntar 'Destino SSH (host o host:puerto) autorizado' 127.0.0.1)")
       parametros+=(--usuario "$(preguntar 'Usuario' demo)")
       parametros+=(--wl "$(ruta_guiada "$(preguntar 'Lista de candidatos ficticios o autorizados' "$SCRIPT_DIR/ejemplos/candidatos_web_ficticios.txt")")")
-      parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-20)' 3)");;
+      parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-200)' 3)");;
     16)
       tipo=cred-scan
       parametros+=("$(ruta_guiada "$(preguntar 'Ruta a escanear (fichero o carpeta)' "$SCRIPT_DIR/ejemplos")")")
@@ -1088,7 +1088,7 @@ guia_extra(){
       parametros+=(--url "$(preguntar 'URL protegida con HTTP Basic' http://127.0.0.1:8769/admin)")
       parametros+=(--usuario "$(preguntar 'Usuario autorizado' demo)")
       parametros+=(--wl "$(ruta_guiada "$(preguntar 'Lista de candidatos ficticios o autorizados' "$SCRIPT_DIR/ejemplos/candidatos_web_ficticios.txt")")")
-      parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-20)' 3)");;
+      parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-200)' 3)");;
   esac
   if [ "$DRY" -eq 1 ]; then
     accion=plan

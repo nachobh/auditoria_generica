@@ -94,8 +94,8 @@ def main(argv=None):
     cs.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     try:
-        if not 1 <= args.maximo <= 5000:
-            raise ValueError("--maximo debe estar entre 1 y 5000")
+        if not 1 <= args.maximo <= 50000:
+            raise ValueError("--maximo debe estar entre 1 y 50000")
         return cred_scan(args.ruta, args.generar, args.maximo, args.dry_run)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))

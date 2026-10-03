@@ -40,8 +40,8 @@ def ssh_brute(host, usuario, lista, limite, seco=False):
         raise ValueError("destino inválido: usa host o host:puerto")
     if not USUARIO.match(usuario):
         raise ValueError("usuario inválido")
-    if not 1 <= limite <= 20:
-        raise ValueError("--limite-intentos debe estar entre 1 y 20")
+    if not 1 <= limite <= 200:
+        raise ValueError("--limite-intentos debe estar entre 1 y 200")
     lista = ruta_lista(lista)
     if not lista.is_file():
         raise ValueError("lista de candidatos no encontrada")

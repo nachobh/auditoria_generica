@@ -27,8 +27,8 @@ def zip_conocido(archivo, entrada, plano, max_seg=120, seco=False):
             raise ValueError("la entrada no usa ZipCrypto heredado")
     if plano.stat().st_size < 12:
         raise ValueError("se necesitan al menos 12 bytes de texto conocido")
-    if not 1 <= max_seg <= 600:
-        raise ValueError("--max-seg debe estar entre 1 y 600")
+    if not 1 <= max_seg <= 6000:
+        raise ValueError("--max-seg debe estar entre 1 y 6000")
     if seco:
         print(f"Plan: bkcrack sobre {archivo.name}, entrada {entrada}, límite {max_seg}s")
         return 0
