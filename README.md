@@ -446,6 +446,24 @@ con WPS de la zona. Por eso `wps-scan` captura con airodump-ng y analiza con
 `wash -f` cuando `airodump-ng` está disponible, y sólo usa wash en vivo como
 último recurso.
 
+**Otros dos fallos confirmados del mismo driver (mt7925), con su workaround:**
+
+- `aireplay-ng --deauth` aborta con «Couldn't determine current channel …
+  channel -1». El driver reporta el canal como -1 en el ioctl; hay que pasar
+  `--ignore-negative-one` (ya incorporado en `run_captura_wifi.sh` y
+  `wifi-deauth`). Sin ese flag la inyección no se lanza y la captura queda
+  pasiva.
+- `bully` no funciona en absoluto: aborta con «ioctl(SIOCSIWFREQ) failed
+  with '-1' … Unable to set channel» incluso fijando el canal antes con
+  `iw dev <iface> set channel N`. No hay flag que evite ese ioctl. En este
+  chip, para WPS PIN sólo queda Reaver (que sí funciona, aunque el beacon
+  tarde minutos en aparecer) o wash offline para el escaneo.
+
+Para crackear el material capturado: `hashcat` no está instalado en esta
+máquina y este build de John (jumbo bleeding) no carga los hashes `.22000`
+de hcxtools («No password hashes loaded»). `aircrack-ng -w lista.cap` sí
+funciona y rinde ~65 000 contraseñas/s con el handshake completo.
+
 ### Cuántos intentos PIN hacen falta (Reaver)
 
 El PIN WPS son 8 dígitos, pero el protocolo lo divide en dos mitades con
