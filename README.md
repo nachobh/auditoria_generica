@@ -27,9 +27,11 @@ kit-auditoria-claves/
 ├── generar_variantes.py         variantes acotadas de semillas autorizadas
 ├── run_captura_wifi.sh          captura WiFi dirigida y configurable
 ├── run_captura_wifi_wps.sh      observación WPS y captura breve de evidencia
-├── extras_wifi.py               bloqueo WPS PIN y adquisición PMKID acotados
+├── extras_wifi.py               WPS PIN, PMKID, inyección deauth y escaneo WPS acotados
 ├── extras_archivos.py           ZipCrypto y permisos PDF
-├── extras_web.py                login WordPress y SQLi booleana acotados
+├── extras_web.py                login WordPress, HTTP Basic y SQLi booleana acotados
+├── extras_ssh.py                intentos SSH acotados con sshpass
+├── extras_credenciales.py       búsqueda de secretos expuestos en ficheros
 ├── extras_wasm.py               inventario estático de módulos WASM
 ├── wifi_capture_utils.py        selección de AP y filtrado WPA 22000
 ├── wps_capture_utils.py         extrae sólo el estado WPS del AP elegido
@@ -59,7 +61,7 @@ kit-auditoria-claves/
 sudo apt-get update
 sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
   python3-olefile libcompress-raw-lzma-perl poppler-utils \
-  hcxtools aircrack-ng iw reaver build-essential libssl-dev
+  hcxtools aircrack-ng iw reaver sshpass build-essential libssl-dev
 ```
 
 - **Motor de crackeo:** `hashcat` (GPU) y/o `john`. El script prefiere hashcat y cae a
@@ -325,13 +327,18 @@ BSSID ni contraseñas reales. `--dry-run` valida el plan sin conectarse al objet
 |------|--------|-----------------------|
 | `wifi-wps-pin` | `wash` pasivo y hasta 5 intentos con Reaver | Detecta bloqueo o registro WPS; pocos intentos inconclusos no prueban seguridad |
 | `wifi-pmkid` | captura dirigida con `hcxdumptool` y filtro PMKID | sólo algunos AP entregan PMKID; el análisis posterior usa formato `22000` |
+| `wifi-deauth` | `aireplay-ng -0` dirigido al BSSID (y cliente opcional) | desconecta a los clientes para forzar el 4-way handshake; interrumpe el servicio unos segundos |
+| `wifi-wps-scan` | `wash -a` pasivo 10–120 s | lista APs con WPS y si anuncian bloqueo; pasivo, no envía paquetes |
+| `ssh-brute` | hasta 20 intentos de contraseña SSH con `sshpass` | un intento por candidato, `NumberOfPasswordPrompts=1`; se detiene si el servidor limita |
+| `cred-scan` | patrones de secretos en ficheros de texto | salida enmascarada; `--generar` guarda candidatos para otras auditorías |
 | `zip-conocido` | texto conocido contra ZipCrypto | no afecta a ZIP con AES |
 | `pdf-permisos` | apertura de PDF con restricciones de copia | no elude una contraseña necesaria para abrir el PDF |
 | `web-login` | hasta 5 intentos de login tipo WordPress | no guarda ni imprime candidatos; se detiene ante HTTP 403/429 |
+| `web-basic` | hasta 20 intentos contra HTTP Basic | 401/403/407 cuentan como fallo; cualquier otro estado se confirma como acceso |
 | `web-sqli` | tres consultas booleanas a un parámetro GET | evidencia diferencial, sujeta a revisión manual; no extrae datos |
 | `wasm` | imports y exports de un módulo binario | inventario estático, no prueba explotación |
 
-### Dos pruebas WiFi
+### Cuatro pruebas WiFi
 
 ```bash
 ./auditor_generico.sh --tipo wifi-wps-pin --interfaz wlan0mon \
@@ -343,7 +350,24 @@ sudo ./auditor_generico.sh --tipo wifi-wps-pin --interfaz wlan0mon \
   --bssid 02:11:22:33:44:55 --canal 6 --segundos 20 --dry-run
 sudo ./auditor_generico.sh --tipo wifi-pmkid --interfaz wlan0 \
   --bssid 02:11:22:33:44:55 --canal 6 --segundos 20
+
+./auditor_generico.sh --tipo wifi-deauth --interfaz wlan0mon \
+  --bssid 02:11:22:33:44:55 --golpes 10 --dry-run
+sudo ./auditor_generico.sh --tipo wifi-deauth --interfaz wlan0mon \
+  --bssid 02:11:22:33:44:55 --cliente 02:AA:BB:CC:DD:EE --golpes 10
+
+./auditor_generico.sh --tipo wifi-wps-scan --interfaz wlan0mon --dry-run
+sudo ./auditor_generico.sh --tipo wifi-wps-scan --interfaz wlan0mon --canal 6 --segundos 30
 ```
+
+`wifi-deauth` envía de 1 a 20 desautenticaciones (`aireplay-ng -0 N -a BSSID
+[-c CLIENTE]`) a un único AP autorizado: desconecta temporalmente a los
+clientes legítimos y los obliga a rehacer el 4-way handshake, que capturas
+mientras con `airodump-ng` o `hcxdumptool`. Si el kernel rechaza los paquetes
+("send failed"), la interfaz no está realmente en modo monitor con inyección.
+`wifi-wps-scan` es pasivo: marca cada AP como `vulnerable` (WPS sin bloqueo
+anunciado) o `bloqueado`, y sugiere el comando `wifi-wps-pin` para los
+candidatos.
 
 El primer modo exige una interfaz **ya en modo monitor**; observa WPS antes de
 probar el PIN y no ignora un bloqueo anunciado. La prueba es online y puede
@@ -355,6 +379,23 @@ evitar logs grandes; si alcanza el límite, puede terminar sin PMKID.
 No uses ambos modos sobre la interfaz que sostiene tu conexión de trabajo.
 La vulnerabilidad de WPS PIN y la importancia del bloqueo están descritas por
 [CERT/CC VU#723755](https://www.kb.cert.org/vuls/id/723755/).
+
+### SSH y credenciales
+
+```bash
+./auditor_generico.sh --tipo ssh-brute --host 192.168.1.50 --usuario ana \
+  --wl ejemplos/candidatos_web_ficticios.txt --limite-intentos 3 --dry-run
+./auditor_generico.sh --tipo cred-scan ~/proyecto --generar /tmp/candidatos.txt
+```
+
+`ssh-brute` usa `sshpass` con una sola pregunta de contraseña por candidato
+(`NumberOfPasswordPrompts=1`), acepta la host key la primera vez y se detiene
+si el servidor empieza a limitar. Requiere autorización sobre el destino: los
+intentos quedan en el `auth.log` del servidor. `cred-scan` busca claves
+privadas, tokens y parámetros `password=` en ficheros de texto de hasta 2 MB
+(excluye `.git`, `node_modules`…); imprime los valores enmascarados y
+`--generar` escribe las contraseñas candidatas para reutilizarlas con
+`ssh-brute`, `web-login` o el crackeo offline.
 
 ### Dos pruebas de archivos
 
@@ -375,7 +416,7 @@ contraseña. El segundo ilustra que las restricciones del propietario de un PDF
 dependen del lector y no equivalen a una contraseña de apertura; consulta la
 [documentación de qpdf](https://github.com/qpdf/qpdf/blob/main/manual/encryption.rst).
 
-### Dos pruebas web
+### Tres pruebas web
 
 Para mostrar ambos casos sin cuentas ni sitios ajenos, arranca el laboratorio
 ficticio en una terminal: `python3 ejemplos/web_lab.py`. Sólo escucha en
@@ -391,6 +432,9 @@ ficticio en una terminal: `python3 ejemplos/web_lab.py`. Sólo escucha en
 ./auditor_generico.sh --tipo web-sqli \
   --url http://127.0.0.1:8769/buscar-seguro --param q \
   --valor libro_ficticio --indicador RESULTADO_FICTICIO
+./auditor_generico.sh --tipo web-basic \
+  --url https://tu-sitio-autorizado/admin --usuario admin \
+  --wl ejemplos/candidatos_web_ficticios.txt --limite-intentos 3
 ```
 
 Para un WordPress propio, sustituye URL, usuario y `--wl` por los autorizados.
