@@ -356,7 +356,15 @@ convertir(){
       fi
       PISTAS[wifi]="sin hcxtools: sólo se puede atacar con john (lento). sudo apt-get install -y aircrack-ng hcxtools"
       conv "$(john_tool wpapcap2john)" "$RUTA";;
-    wifi22000|wifi16800|wifi_hccapx) return 0;;
+    wifi22000) return 0;;
+    wifi_hccapx)
+      # hashcat 7 eliminó el modo 2500: el hccapx se convierte al formato wpapsk de john
+      if [ -x "$(john_tool hccap2john)" ]; then
+        conv "$(john_tool hccap2john)" "$RUTA" && FMT=wifi_john && return 0
+      fi
+      PISTAS[wifi]="para .hccapx sin john: conviértelo con hcxpcapngtool desde el .cap original"
+      return 1;;
+    wifi16800) return 0;;
     externo) return 0;;
     *)
       err "tipo no soportado: $FMT"
@@ -384,7 +392,6 @@ elegir_modo(){
   case "$FMT" in
     wifi22000) MODO=22000; return 0;;
     wifi16800) MODO=16800; return 0;;
-    wifi_hccapx) MODO=2500; return 0;;
   esac
   if [ "$FMT" = raw ]; then
     err "hash hexadecimal ambiguo: indica --modo (por ejemplo, 0=MD5, 100=SHA1, 1000=NTLM)"
@@ -428,7 +435,7 @@ elegir_motor(){
   if [ "$MOTOR" = john ]; then
     if [ ! -x "$JOHN" ]; then err "john no encontrado en $JOHN"; return 1; fi
     case "$FMT" in
-      wifi22000|wifi_hccapx|wifi16800)
+      wifi22000|wifi16800)
         err "john no lee ese formato de wifi ($FMT); usa --motor hashcat"
         return 1;;
     esac
