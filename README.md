@@ -27,6 +27,7 @@ kit-auditoria-claves/
 ├── generar_variantes.py         variantes acotadas de semillas autorizadas
 ├── run_captura_wifi.sh          captura WiFi dirigida y configurable
 ├── run_captura_wifi_wps.sh      observación WPS y captura breve de evidencia
+├── run_reaver_largo.sh          ataque WPS PIN prolongado con reintentos
 ├── extras_wifi.py               WPS PIN, PMKID, inyección deauth y escaneo WPS acotados
 ├── extras_archivos.py           ZipCrypto y permisos PDF
 ├── extras_web.py                login WordPress, HTTP Basic y SQLi booleana acotados
@@ -386,6 +387,17 @@ mientras con `airodump-ng` o `hcxdumptool`. Si el kernel rechaza los paquetes
 anunciado) o `bloqueado`, y sugiere el comando `wifi-wps-pin` para los
 candidatos.
 
+El primer modo exige una interfaz **ya en modo monitor**; observa WPS antes de
+probar el PIN y no ignora un bloqueo anunciado. La prueba es online y puede
+afectar al AP. El segundo usa la interfaz WiFi directamente, aplica un filtro
+por BSSID, guarda un `.pcapng` privado y entrega sólo PMKID de ese AP en
+`pmkid_objetivo.22000`; indica `--banda 2g|5g` si el canal lo requiere.
+El proceso limita la captura a 32 MiB y suprime la salida de pantalla para
+evitar logs grandes; si alcanza el límite, puede terminar sin PMKID.
+No uses ambos modos sobre la interfaz que sostiene tu conexión de trabajo.
+La vulnerabilidad de WPS PIN y la importancia del bloqueo están descritas por
+[CERT/CC VU#723755](https://www.kb.cert.org/vuls/id/723755/).
+
 ### Si wash no ve ningún AP: fixes según la tarjeta
 
 Síntoma: `wash` (en vivo o vía `wps-scan`) responde "Sin APs con WPS
@@ -466,16 +478,6 @@ salida (0700) y lo reanuda solo, así que Ctrl-C o un apagón no pierden lo
 ya probado. Para al encontrar el PIN, al alcanzar `--rondas-max`, o con
 Ctrl-C. El PIN y la PSK quedan en los logs: trátalos como secretos.
 
-El primer modo exige una interfaz **ya en modo monitor**; observa WPS antes de
-probar el PIN y no ignora un bloqueo anunciado. La prueba es online y puede
-afectar al AP. El segundo usa la interfaz WiFi directamente, aplica un filtro
-por BSSID, guarda un `.pcapng` privado y entrega sólo PMKID de ese AP en
-`pmkid_objetivo.22000`; indica `--banda 2g|5g` si el canal lo requiere.
-El proceso limita la captura a 32 MiB y suprime la salida de pantalla para
-evitar logs grandes; si alcanza el límite, puede terminar sin PMKID.
-No uses ambos modos sobre la interfaz que sostiene tu conexión de trabajo.
-La vulnerabilidad de WPS PIN y la importancia del bloqueo están descritas por
-[CERT/CC VU#723755](https://www.kb.cert.org/vuls/id/723755/).
 
 ### SSH y credenciales
 
