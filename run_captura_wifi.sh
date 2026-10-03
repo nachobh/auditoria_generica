@@ -215,7 +215,7 @@ CAP_PID=$!
 if [ "$DEAUTH" -gt 0 ]; then
   sleep 5
   info "enviando $DEAUTH tandas de desconexión al BSSID indicado expresamente"
-  aireplay-ng -0 "$DEAUTH" -a "$BSSID" "$MON_IFACE" >"$RUN_DIR/deauth.log" 2>&1 || \
+  aireplay-ng --ignore-negative-one -0 "$DEAUTH" -a "$BSSID" "$MON_IFACE" >"$RUN_DIR/deauth.log" 2>&1 || \
     info "no se pudo completar --deauth; la captura pasiva continúa"
 fi
 info "capturando durante $MINUTOS min"

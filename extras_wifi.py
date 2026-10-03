@@ -266,7 +266,7 @@ def deauth(interfaz, bssid, cliente=None, golpes=10, seco=False):
     if os.geteuid() != 0:
         raise ValueError("requiere sudo e interfaz ya en modo monitor")
     aireplay = binario("aireplay-ng")
-    orden = [aireplay, "-0", str(golpes), "-a", bssid]
+    orden = [aireplay, "--ignore-negative-one", "-0", str(golpes), "-a", bssid]
     if cliente:
         orden += ["-c", cliente]
     orden.append(interfaz)
