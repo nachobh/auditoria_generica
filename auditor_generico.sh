@@ -102,6 +102,7 @@ alias_modo(){
     wps-scan) printf 'wifi-wps-scan';;
     pmkid) printf 'wifi-pmkid';;
     deauth) printf 'wifi-deauth';;
+    mitm) printf 'mitm-arp';;
     ssh) printf 'ssh-brute';;
     cred) printf 'cred-scan';;
     *) printf '%s' "$1";;
@@ -110,7 +111,7 @@ alias_modo(){
 
 es_modo_extra(){
   case "$(alias_modo "$1")" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|ssh-brute|cred-scan|wasm) return 0;;
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|mitm-arp|ssh-brute|cred-scan|wasm) return 0;;
     *) return 1;;
   esac
 }
@@ -137,6 +138,7 @@ Tipos (--tipo):
   wifi-pmkid    adquisición dirigida de PMKID con hcxdumptool
   wifi-deauth   inyección de desautenticación (aireplay-ng) para forzar el handshake
   wifi-wps-scan escaneo pasivo de objetivos WPS con wash
+  mitm-arp      envenenamiento ARP acotado (bettercap) en red propia o autorizada
   ssh-brute     intentos acotados de contraseña SSH con sshpass
   cred-scan     búsqueda de credenciales expuestas en ficheros (enmascarada)
   wasm          inventario estático de imports y exports
@@ -1032,10 +1034,11 @@ guia(){
   printf ' 15) SSH: intentos acotados de contraseña (sshpass)\n'
   printf ' 16) Credenciales: búsqueda de secretos expuestos en ficheros\n'
   printf ' 17) Web: intentos contra autenticación HTTP Basic\n'
+  printf ' 18) MITM: envenenamiento ARP acotado (bettercap, red propia)\n'
   local op
   op=$(preguntar "Tipo de objetivo" 1)
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17) guia_extra "$op";;
+    6|7|8|9|10|11|12|13|14|15|16|17|18) guia_extra "$op";;
   esac
   case "$op" in
     1) TIPO_ARG=archivo;;
@@ -1133,6 +1136,14 @@ guia_extra(){
       parametros+=(--usuario "$(preguntar 'Usuario autorizado' demo)")
       parametros+=(--wl "$(ruta_guiada "$(preguntar 'Lista de candidatos ficticios o autorizados' "$SCRIPT_DIR/ejemplos/candidatos_web_ficticios.txt")")")
       parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-200)' 3)");;
+    18)
+      tipo=mitm-arp
+      parametros+=(--interfaz "$(preguntar 'Interfaz de la LAN (ej. wlan0 o eth0)' wlan0)")
+      valor=$(preguntar 'IPv4 del equipo objetivo (vacío = toda la LAN)' '')
+      [ -n "$valor" ] && parametros+=(--objetivo "$valor")
+      valor=$(preguntar 'IPv4 del gateway (vacío = el por defecto del sistema)' '')
+      [ -n "$valor" ] && parametros+=(--gateway "$valor")
+      parametros+=(--segundos "$(preguntar 'Duración del envenenamiento en segundos (10-3600)' 60)");;
   esac
   if [ "$DRY" -eq 1 ]; then
     accion=plan
@@ -1266,7 +1277,7 @@ despachar_extra(){
   tipo=$(alias_modo "$tipo")
   if [ -n "$tiempo" ]; then
     case "$tipo" in
-      wifi-pmkid|wifi-wps-scan)
+      wifi-pmkid|wifi-wps-scan|mitm-arp)
         [[ "$tiempo" =~ ^[0-9]+$ ]] || { err "--tiempo debe ser un entero"; exit 2; }
         restantes+=(--segundos "$tiempo");;
       zip-conocido)
@@ -1279,6 +1290,7 @@ despachar_extra(){
     web-login|web-sqli|web-basic) modulo=extras_web.py;;
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
     wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan) modulo=extras_wifi.py;;
+    mitm-arp) modulo=extras_mitm.py;;
     ssh-brute) modulo=extras_ssh.py;;
     cred-scan) modulo=extras_credenciales.py;;
     wasm) modulo=extras_wasm.py;;

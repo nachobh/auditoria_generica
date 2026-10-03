@@ -218,6 +218,34 @@ class ExtraTests(unittest.TestCase):
         self.assertEqual(proceso.returncode, 2)
         self.assertIn("--tipo desconocido", proceso.stderr)
 
+    def test_mitm_arp_dry_run_y_validaciones(self):
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--modo", "mitm", "--interfaz", "wlan0",
+             "--objetivo", "192.168.1.10", "--gateway", "192.168.1.1",
+             "--tiempo", "60", "--dry-run"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("bettercap arp-spoof wlan0", proceso.stdout)
+        self.assertIn("192.168.1.10", proceso.stdout)
+        self.assertIn("60s", proceso.stdout)
+        for mal in ("no-es-ip", "999.1.1.1", "1.2.3"):
+            proceso = subprocess.run(
+                ["bash", str(AUDITOR), "--modo", "mitm", "--interfaz", "wlan0",
+                 "--objetivo", mal, "--dry-run"],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(proceso.returncode, 2, mal)
+            self.assertIn("IPv4", proceso.stderr)
+        # sin permisos y sin dry-run debe exigir sudo
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--modo", "mitm", "--interfaz", "wlan0",
+             "--objetivo", "192.168.1.10", "--gateway", "192.168.1.1"],
+            capture_output=True, text=True, timeout=15,
+        )
+        self.assertNotEqual(proceso.returncode, 0)
+        self.assertIn("sudo", proceso.stderr + proceso.stdout)
+
     def test_menu_muestra_comando_equivalente(self):
         # modo extra (opción 13)
         proceso = subprocess.run(
@@ -242,7 +270,7 @@ class ExtraTests(unittest.TestCase):
                           proceso.stdout)
 
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
-        for opcion in range(6, 18):
+        for opcion in range(6, 19):
             with self.subTest(opcion=opcion):
                 if opcion in (6, 7):
                     entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
@@ -256,6 +284,8 @@ class ExtraTests(unittest.TestCase):
                     entradas = f"{opcion}\n{Path(__file__).with_name('ejemplos')}\n\nplan\n"
                 elif opcion == 17:
                     entradas = f"{opcion}\nhttp://127.0.0.1:9/wp\ndemo\n\n3\nplan\n"
+                elif opcion == 18:
+                    entradas = f"{opcion}\nwlan0\n192.168.1.10\n192.168.1.1\n60\nplan\n"
                 else:
                     entradas = f"{opcion}\n" + "\n" * 6
                 proceso = subprocess.run(["bash", str(AUDITOR)], input=entradas,

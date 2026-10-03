@@ -29,6 +29,7 @@ kit-auditoria-claves/
 ├── run_captura_wifi_wps.sh      observación WPS y captura breve de evidencia
 ├── run_reaver_largo.sh          ataque WPS PIN prolongado con reintentos
 ├── extras_wifi.py               WPS PIN, PMKID, inyección deauth y escaneo WPS acotados
+├── extras_mitm.py               envenenamiento ARP acotado con bettercap (red propia)
 ├── extras_archivos.py           ZipCrypto y permisos PDF
 ├── extras_web.py                login WordPress, HTTP Basic y SQLi booleana acotados
 ├── extras_ssh.py                intentos SSH acotados con sshpass
@@ -347,6 +348,7 @@ BSSID ni contraseñas reales. `--dry-run` valida el plan sin conectarse al objet
 | `wifi-pmkid` | captura dirigida con `hcxdumptool` y filtro PMKID | sólo algunos AP entregan PMKID; el análisis posterior usa formato `22000` |
 | `wifi-deauth` | `aireplay-ng -0` dirigido al BSSID (y cliente opcional) | desconecta a los clientes para forzar el 4-way handshake; interrumpe el servicio unos segundos |
 | `wifi-wps-scan` | `wash -a` pasivo 10–1200 s | lista APs con WPS y si anuncian bloqueo; pasivo, no envía paquetes |
+| `mitm-arp` | envenenamiento ARP con `bettercap` (10–3600 s) | redirige el tráfico del objetivo por esta máquina; interrumpe la LAN y es visible para sus usuarios |
 | `ssh-brute` | hasta 200 intentos de contraseña SSH con `sshpass` | un intento por candidato, `NumberOfPasswordPrompts=1`; se detiene si el servidor limita |
 | `cred-scan` | patrones de secretos en ficheros de texto | salida enmascarada; `--generar` guarda candidatos para otras auditorías |
 | `zip-conocido` | texto conocido contra ZipCrypto | no afecta a ZIP con AES |
@@ -506,6 +508,34 @@ descubre al intentar el PIN. El script prolongado lo tolera (reintenta tras
 la espera), pero si el bucle de deauth persiste ronda tras ronda, el AP está
 efectivamente cerrado al método PIN y conviene pasar a PMKID/handshake.
 
+
+### Man in the middle (mitm-arp)
+
+```bash
+# plan sin permisos ni paquetes
+./auditor_generico.sh --modo mitm --interfaz wlan0 --objetivo 192.168.1.10 --dry-run
+# prueba real en red propia (30 s de envenenamiento)
+sudo ./auditor_generico.sh --modo mitm --interfaz wlan0 \
+  --objetivo 192.168.1.10 --gateway 192.168.1.1 --tiempo 30
+```
+
+El modo usa `bettercap` (arp-spoofing bidireccional, `arp.spoof.fullduplex`)
+durante un tiempo acotado (10–3600 s) y restaura `ip_forward` al terminar,
+pase lo que pase. Sin `--objetivo` envenena a toda la LAN; con
+`--sin-gateway` (`arp.spoof.only`) sólo enreda entre objetivos sin tocar la
+salida a Internet. El gateway se autodetecta desde la tabla de enrutado si no
+se indica.
+
+Qué demuestra y qué no: el tráfico del objetivo pasa por esta máquina, lo que
+habilita el sniff de protocolos en claro (HTTP, DNS, ARP) y ataques de
+proxy/sslstrip en la misma sesión de bettercap. Con HTTPS bien configurado
+sólo se ven metadatos (SNI, dominios); un certificado desconocido lo detecta
+cualquier navegador moderno. Es una prueba de exposición, no de compromiso.
+
+Legalidad: el envenenamiento ARP envía ARP replies falsos a equipos de tu
+LAN. En red propia está claro; en redes ajenas interceptar tráfico ajeno sin
+autorización toca el art. 197 CP (secreto de las comunicaciones) además de la
+LSSI. Bettercap 2.x usa `-iface`/`-silent` (no `-I`/`--no-ui` de la 1.x).
 
 ### SSH y credenciales
 
