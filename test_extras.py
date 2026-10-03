@@ -184,6 +184,63 @@ class ExtraTests(unittest.TestCase):
             with self.subTest(argumentos=argumentos[-2:]):
                 self.assertEqual(proceso.returncode, 2)
 
+    def test_modo_alias_y_tiempo_atajo(self):
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--modo", "pmkid", "--interfaz", "wlan0",
+             "--bssid", "02:11:22:33:44:55", "--canal", "6", "--tiempo", "600",
+             "--dry-run"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("600s", proceso.stdout)
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--modo", "ssh", "--host", "127.0.0.1",
+             "--usuario", "demo", "--dry-run"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("sshpass", proceso.stdout)
+        # --modo numérico sigue siendo el modo de hashcat
+        with tempfile.TemporaryDirectory() as td:
+            hash_file = Path(td) / "md5.txt"
+            hash_file.write_text("5f4dcc3b5aa765d61d8327deb882cf99\n")
+            proceso = subprocess.run(
+                ["bash", str(AUDITOR), "--tipo", "hash", "--modo", "0",
+                 "--dry-run", str(hash_file)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(proceso.returncode, 0, proceso.stderr)
+            self.assertIn("raw", proceso.stdout)
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--modo", "inexistente", "--dry-run"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proceso.returncode, 2)
+        self.assertIn("--tipo desconocido", proceso.stderr)
+
+    def test_menu_muestra_comando_equivalente(self):
+        # modo extra (opción 13)
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR)],
+            input="13\nwlan0mon\n02:11:22:33:44:55\n\n\nplan\n",
+            capture_output=True, text=True, timeout=10)
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("Comando equivalente para repetir sin el menú:", proceso.stdout)
+        self.assertIn("--tipo wifi-deauth --interfaz wlan0mon "
+                      "--bssid 02:11:22:33:44:55 --golpes 10 --dry-run", proceso.stdout)
+        # flujo offline (opción 1)
+        with tempfile.TemporaryDirectory() as td:
+            objetivo = Path(td) / "f.zip"
+            objetivo.write_bytes(b"PK\x03\x04")
+            proceso = subprocess.run(
+                ["bash", str(AUDITOR), "--dry-run"],
+                input=f"1\n{objetivo}\n1-2\nauto\n",
+                capture_output=True, text=True, timeout=10)
+            self.assertEqual(proceso.returncode, 0, proceso.stderr)
+            self.assertIn("Comando equivalente para repetir sin el menú:", proceso.stdout)
+            self.assertIn(f"--tipo archivo --nivel 1-2 --motor auto --dry-run {objetivo}",
+                          proceso.stdout)
+
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
         for opcion in range(6, 18):
             with self.subTest(opcion=opcion):

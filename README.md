@@ -131,6 +131,23 @@ Por línea de comandos:
 **Tipos (`--tipo`):** `archivo` (rar/zip/7z/pdf/keepass, autodetecta), `office`,
 `wifi`, `hash`, `externo` (formato no reconocido) y `auto` (por defecto).
 
+**Modos cortos (`--modo`):** alias de `--tipo` para los modos de ataque:
+`wps`, `wps-scan`, `pmkid`, `deauth`, `ssh`, `cred`, además de los nombres
+largos completos. `--modo` con número sigue siendo el modo de hashcat
+(`--modo 0` = MD5). `--tiempo N` es un atajo según el modo: segundos para
+`pmkid` y `wps-scan`, segundos de bkcrack para `zip-conocido` y minutos
+(equivalente a `--max-min`) para objetivos offline.
+
+```bash
+./auditor_generico.sh --modo pmkid --interfaz wlan0 \
+  --bssid 02:11:22:33:44:55 --canal 6 --tiempo 600
+./auditor_generico.sh --modo ssh --host 192.168.1.50 --usuario ana --limite-intentos 200
+```
+
+Al terminar el menú guiado, justo antes de lanzar la prueba, se imprime el
+**comando equivalente con flags** para repetir la misma ejecución sin volver
+a pasar por el menú.
+
 **Niveles (`--nivel` 1..5 o rango, por defecto `1-3`):**
 
 | Nivel | Qué hace |

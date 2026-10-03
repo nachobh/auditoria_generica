@@ -59,6 +59,9 @@ TIPO_ARG=auto
 NIVEL=1-3
 MOTOR_ARG=auto
 MODO_ARG=
+TIEMPO_ARG=
+SEGUNDOS_ARG=
+MAXSEG_ARG=
 FMTJ_ARG=
 DRY=0
 SI=0
@@ -93,6 +96,25 @@ ok(){ printf '[+] %s\n' "$*"; }
 aviso(){ printf '[!] %s\n' "$*" >&2; }
 err(){ printf '[-] %s\n' "$*" >&2; }
 
+alias_modo(){
+  case "$1" in
+    wps) printf 'wifi-wps-pin';;
+    wps-scan) printf 'wifi-wps-scan';;
+    pmkid) printf 'wifi-pmkid';;
+    deauth) printf 'wifi-deauth';;
+    ssh) printf 'ssh-brute';;
+    cred) printf 'cred-scan';;
+    *) printf '%s' "$1";;
+  esac
+}
+
+es_modo_extra(){
+  case "$(alias_modo "$1")" in
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|ssh-brute|cred-scan|wasm) return 0;;
+    *) return 1;;
+  esac
+}
+
 uso(){
 cat <<'EOF'
 auditor_generico.sh — auditoría guiada de contraseñas (de lo simple a lo complejo)
@@ -125,6 +147,13 @@ Niveles (--nivel): 1..5 o rango 1-3 (por defecto 1-3)
   5) máscaras y rainbow tables
 
 Opciones:
+  --modo NOMBRE                alias de --tipo con nombres cortos:
+                               wps, wps-scan, pmkid, deauth, ssh, cred,
+                               web-login, web-basic, web-sqli, zip-conocido,
+                               pdf-permisos, wasm (o el nombre largo completo)
+  --tiempo N                   atajo según el modo: segundos para pmkid y
+                               wps-scan; segundos bkcrack para zip-conocido;
+                               minutos (--max-min) en objetivos offline
   --motor auto|hashcat|john    motor principal (por defecto auto)
   --modo N                     modo hashcat para hash crudo (ej. 0, 1000)
   --formato NOMBRE             formato john si hay duda (auto por defecto)
@@ -146,6 +175,8 @@ Ejemplos:
   auditor_generico.sh --tipo externo --externo-cmd '/ruta/verificador.sh %P' fichero.xdf
   auditor_generico.sh --tipo hash --modo 0 --nivel 5 hash_md5.txt
   auditor_generico.sh --tipo web-login --url https://ejemplo.invalid/wp-login.php --usuario demo --dry-run
+  auditor_generico.sh --modo pmkid --interfaz wlan0 --bssid 02:11:22:33:44:55 --canal 6 --tiempo 600 --dry-run
+  auditor_generico.sh --modo ssh --host 192.168.1.50 --usuario ana --limite-intentos 200
   auditor_generico.sh --tipo zip-conocido ejemplos/extras/zipcrypto_demo.zip --entrada texto_conocido.txt --plano ejemplos/extras/texto_conocido.txt
 
 Variables de entorno (opcional):
@@ -969,6 +1000,19 @@ resumen_final(){
   return 1
 }
 
+mostrar_equivalente(){
+  printf '\nComando equivalente para repetir sin el menú:\n'
+  printf '  '
+  local a
+  for a in "$@"; do
+    case "$a" in
+      *[!A-Za-z0-9._/:=@%+-]*) printf '%q ' "$a";;
+      *) printf '%s ' "$a";;
+    esac
+  done
+  printf '\n\n'
+}
+
 guia(){
   printf '=== Auditoría guiada de contraseñas ===\n'
   printf '  1) Fichero cifrado (rar/zip/7z/pdf/keepass...)\n'
@@ -1100,6 +1144,7 @@ guia_extra(){
     prueba) ;;
     *) err "acción desconocida: $accion"; exit 2;;
   esac
+  mostrar_equivalente "$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")" --tipo "$tipo" "${parametros[@]}"
   despachar_extra --tipo "$tipo" "${parametros[@]}"
 }
 
@@ -1119,11 +1164,19 @@ parsear(){
   while [ $# -gt 0 ]; do
     case "$1" in
       --help|-h) uso; exit 0;;
-      --tipo|--nivel|--motor|--modo|--formato|--max-min|--wl|--externo-cmd|--rainbow-dir)
+      --modo)
+        [ $# -ge 2 ] && [[ "$2" != --* ]] || { err "falta valor para $1"; exit 2; }
+        if [[ "$2" =~ ^[0-9]+$ ]]; then MODO_ARG=$2; else TIPO_ARG=$(alias_modo "$2"); fi
+        shift 2;;
+      --tiempo)
+        [ $# -ge 2 ] && [[ "$2" != --* ]] || { err "falta valor para $1"; exit 2; }
+        [[ "$2" =~ ^[0-9]+$ ]] || { err "--tiempo debe ser un entero"; exit 2; }
+        TIEMPO_ARG=$2; shift 2;;
+      --tipo|--nivel|--motor|--formato|--max-min|--wl|--externo-cmd|--rainbow-dir)
         [ $# -ge 2 ] && [[ "$2" != --* ]] || { err "falta valor para $1"; exit 2; }
         case "$1" in
           --tipo) TIPO_ARG=$2;; --nivel) NIVEL=$2;; --motor) MOTOR_ARG=$2;;
-          --modo) MODO_ARG=$2;; --formato) FMTJ_ARG=$2;;
+          --formato) FMTJ_ARG=$2;;
           --max-min) MAXMIN=$2;; --wl) WL_ARG=$2;;
           --externo-cmd) EXT_CMD=$2;; --rainbow-dir) RC_TAB=$2;;
         esac
@@ -1142,6 +1195,10 @@ parsear(){
   [[ "$MAXMIN" =~ ^[0-9]+$ ]] || { err "--max-min debe ser un entero no negativo"; exit 2; }
   [ "${#MAXMIN}" -le 7 ] || { err "--max-min demasiado grande"; exit 2; }
   MAXMIN=$((10#$MAXMIN))
+  if [ -n "$TIEMPO_ARG" ]; then
+    if [ "$MAXMIN" -gt 0 ]; then err "--tiempo y --max-min son incompatibles"; exit 2; fi
+    MAXMIN=$((10#$TIEMPO_ARG))
+  fi
   [ -z "$MODO_ARG" ] || [[ "$MODO_ARG" =~ ^[0-9]+$ ]] || { err "--modo debe ser numérico"; exit 2; }
   case "$TIPO_ARG" in auto|archivo|office|wifi|hash|externo) ;; *) err "--tipo desconocido: $TIPO_ARG"; exit 2;; esac
   case "$MOTOR_ARG" in auto|hashcat|john) ;; *) err "--motor desconocido: $MOTOR_ARG"; exit 2;; esac
@@ -1186,18 +1243,38 @@ limpiar_sensibles(){
 }
 
 despachar_extra(){
-  local tipo= modulo= arg
+  local tipo= modulo= arg tiempo=
   local -a restantes=()
   while [ $# -gt 0 ]; do
     if [ "$1" = --tipo ]; then
       [ $# -ge 2 ] || { err "falta valor para --tipo"; exit 2; }
       tipo=$2
       shift 2
+    elif [ "$1" = --modo ] && [[ "${2:-}" != [0-9]* ]]; then
+      [ $# -ge 2 ] || { err "falta valor para --modo"; exit 2; }
+      tipo=$(alias_modo "$2")
+      shift 2
+    elif [ "$1" = --tiempo ]; then
+      [ $# -ge 2 ] || { err "falta valor para --tiempo"; exit 2; }
+      tiempo=$2
+      shift 2
     else
       restantes+=("$1")
       shift
     fi
   done
+  tipo=$(alias_modo "$tipo")
+  if [ -n "$tiempo" ]; then
+    case "$tipo" in
+      wifi-pmkid|wifi-wps-scan)
+        [[ "$tiempo" =~ ^[0-9]+$ ]] || { err "--tiempo debe ser un entero"; exit 2; }
+        restantes+=(--segundos "$tiempo");;
+      zip-conocido)
+        [[ "$tiempo" =~ ^[0-9]+$ ]] || { err "--tiempo debe ser un entero"; exit 2; }
+        restantes+=(--max-seg "$tiempo");;
+      *) err "--tiempo no aplica al modo $tipo"; exit 2;;
+    esac
+  fi
   case "$tipo" in
     web-login|web-sqli|web-basic) modulo=extras_web.py;;
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
@@ -1219,20 +1296,28 @@ despachar_extra(){
 }
 
 main(){
-  local tipo_extra= i
+  local modo_extra= i
   local -a entrada=("$@")
   for ((i=0; i+1<${#entrada[@]}; i++)); do
-    if [ "${entrada[$i]}" = --tipo ]; then tipo_extra=${entrada[$((i+1))]}; fi
+    case "${entrada[$i]}" in
+      --tipo) modo_extra=${entrada[$((i+1))]};;
+      --modo) [[ "${entrada[$((i+1))]}" =~ ^[0-9]+$ ]] || modo_extra=${entrada[$((i+1))]};;
+    esac
   done
-  case "$tipo_extra" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|ssh-brute|cred-scan|wasm)
-      despachar_extra "$@";;
-  esac
+  if es_modo_extra "$modo_extra"; then
+    despachar_extra "$@"
+  fi
   parsear "$@"
   if [ -z "$RUTA" ]; then
     if [ "$SI" -eq 1 ]; then uso; exit 2; fi
     guia
     parsear_nivel
+    local -a equivalente=(--tipo "$TIPO_ARG" --nivel "$NIVEL" --motor "$MOTOR_ARG")
+    [ "$DRY" -eq 1 ] && equivalente+=(--dry-run)
+    [ "$SI" -eq 1 ] && equivalente+=(--yes)
+    [ -n "$EXT_CMD" ] && equivalente+=(--externo-cmd "$EXT_CMD")
+    equivalente+=("$RUTA")
+    mostrar_equivalente "$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")" "${equivalente[@]}"
   fi
   if [ ! -f "$RUTA" ]; then err "no existe el fichero: $RUTA"; exit 2; fi
   RUTA=$(readlink -f "$RUTA")
