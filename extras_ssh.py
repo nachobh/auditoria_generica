@@ -79,7 +79,15 @@ def ssh_brute(host, usuario, lista, limite, seco=False):
         if "too many authentication failures" in salida or "connection closed" in salida:
             print(f"El servidor limita intentos tras {hechos}; prueba detenida por cortesía")
             return 0 if hechos else 3
-        if "permission denied" not in salida and proceso.returncode not in {5, 255}:
+        # 255 sin «permission denied» = error de ssh (conexión rechazada, host
+        # desconocido, caída...), no contraseña rechazada: no seguir gastando intentos.
+        # Código 5 de sshpass sí es rechazo explícito de contraseña.
+        if "permission denied" not in salida and proceso.returncode != 5:
+            if proceso.returncode == 255:
+                print(f"Error de conexión ssh (código 255) en el intento {hechos}: "
+                      "no es un rechazo de contraseña; prueba inconcluyente")
+                print(f"detalle: {salida.strip()[:200]}")
+                return 3
             print(f"Respuesta inesperada de ssh (código {proceso.returncode}); se detiene la prueba")
             return 3
     unidad = "intento" if hechos == 1 else "intentos"

@@ -65,13 +65,32 @@ def wps_pin(interfaz, bssid, canal, intentos=3, seco=False):
     wash, reaver = binario("wash"), binario("reaver")
     os.umask(0o077)
     with tempfile.TemporaryDirectory(prefix="wps_pin_") as temporal:
-        try:
-            exploracion = subprocess.run([wash, "-u", "-i", interfaz, "-c", str(canal)],
-                                         capture_output=True, timeout=10, check=False,
-                                         cwd=temporal)
-            texto = exploracion.stdout.decode(errors="replace")
-        except subprocess.TimeoutExpired as exc:
-            texto = (exc.stdout or b"").decode(errors="replace")
+        # Como en wifi-wps-scan: con airodump se captura y wash analiza el pcap
+        # offline. En chips como el MT7925 el wash en vivo puede no ver un AP
+        # que la captura offline sí detecta (ver README).
+        texto = ""
+        airodump = shutil.which("airodump-ng")
+        if airodump:
+            base = Path(temporal) / "wps_pin_probe"
+            subprocess.run(["timeout", "--signal=INT", "--kill-after=3s", "10",
+                            airodump, "-w", str(base), "--output-format", "pcap",
+                            "-c", str(canal), interfaz],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           check=False)
+            cap = Path(str(base) + "-01.cap")
+            if cap.is_file() and cap.stat().st_size > 24:
+                offline = subprocess.run([wash, "-f", str(cap), "-a"],
+                                         capture_output=True, timeout=120,
+                                         check=False, cwd=temporal)
+                texto = offline.stdout.decode(errors="replace")
+        if not texto.strip():
+            try:
+                exploracion = subprocess.run([wash, "-u", "-i", interfaz, "-c", str(canal)],
+                                             capture_output=True, timeout=10, check=False,
+                                             cwd=temporal)
+                texto = exploracion.stdout.decode(errors="replace")
+            except subprocess.TimeoutExpired as exc:
+                texto = (exc.stdout or b"").decode(errors="replace")
         estado = estado_wps(texto.splitlines(), bssid, canal)
         if estado is None:
             print("WPS no observado; no se enviaron intentos PIN")
@@ -237,7 +256,9 @@ def wps_scan(interfaz, canal=None, segundos=20, seco=False):
     candidatos = 0
     for bssid, canal_ap, version, lock, essid in filas:
         bloqueado = lock.lower() in {"yes", "si", "sí", "1"}
-        marca = "vulnerable" if not bloqueado else "bloqueado"
+        # «sin bloqueo anunciado» no demuestra vulnerabilidad: sólo indica que
+        # el beacon no reporta lock; puede no admitir PIN o tener protección real.
+        marca = "sin bloqueo anunciado" if not bloqueado else "bloqueado"
         if not bloqueado:
             candidatos += 1
         print(f"{bssid} canal {canal_ap} WPS {version} {marca} {essid}".rstrip())

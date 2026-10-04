@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import re
 import sys
+import stat
+import tempfile
 
 PATRONES = (
     ("clave-privada", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
@@ -30,17 +32,29 @@ def enmascarar(valor):
 
 def escanear_arbol(ruta, maximo=MAX_CANDIDATOS):
     raiz = Path(ruta)
+    if raiz.is_symlink():
+        raise ValueError("la ruta del escaneo no puede ser un enlace simbólico")
     if not raiz.exists():
         raise ValueError("la ruta no existe")
-    objetivos = [raiz] if raiz.is_file() else sorted(
-        p for p in raiz.rglob("*")
-        if p.is_file() and not any(part in EXCLUIDOS for part in p.parts)
-        and p.stat().st_size <= MAX_BYTES)
+    objetivos = [raiz] if raiz.is_file() else []
+    if raiz.is_dir():
+        for carpeta, directorios, archivos in os.walk(raiz, followlinks=False):
+            directorios[:] = sorted(d for d in directorios if d not in EXCLUIDOS
+                                    and not (Path(carpeta) / d).is_symlink())
+            objetivos.extend(Path(carpeta) / nombre for nombre in sorted(archivos))
     hallazgos = []
     candidatos = []
     for fichero in objetivos:
         try:
-            texto = fichero.read_text(encoding="utf-8", errors="ignore")
+            fd = os.open(fichero, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as entrada:
+                info = os.fstat(entrada.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_BYTES:
+                    continue
+                datos = entrada.read(MAX_BYTES + 1)
+            if len(datos) > MAX_BYTES:
+                continue
+            texto = datos.decode("utf-8", errors="ignore")
         except OSError:
             continue
         if "\0" in texto[:4096]:
@@ -75,12 +89,21 @@ def cred_scan(ruta, generar=None, maximo=MAX_CANDIDATOS, seco=False):
           "queda en la lista generada si la pides)")
     if generar:
         destino = Path(generar)
-        temporal = destino.with_name(destino.name + ".tmp")
-        with temporal.open("w", encoding="utf-8") as salida:
-            for candidato in candidatos:
-                salida.write(candidato + "\n")
-        os.replace(temporal, destino)
-        print(f"Lista de candidatos para otras auditorías: {destino} ({len(candidatos)} líneas)")
+        if destino.is_symlink():
+            raise ValueError(f"el destino {destino} es un enlace simbólico; se rechaza por seguridad")
+        # temporal exclusivo 0600 en el mismo directorio: sin predicción de nombre,
+        # sin seguir enlaces, y la lista final nunca queda legible por grupo/otros.
+        fd, nombre_temporal = tempfile.mkstemp(dir=str(destino.parent or Path(".")),
+                                               prefix=destino.name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as salida:
+                for candidato in candidatos:
+                    salida.write(candidato + "\n")
+            os.replace(nombre_temporal, destino)
+        except BaseException:
+            Path(nombre_temporal).unlink(missing_ok=True)
+            raise
+        print(f"Lista de candidatos para otras auditorías: {destino} ({len(candidatos)} líneas, permisos 0600)")
     return 0
 
 

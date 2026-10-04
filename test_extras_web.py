@@ -12,9 +12,17 @@ from extras_web import basic, login, sqli
 class ServidorBasic(BaseHTTPRequestHandler):
     def do_GET(self):
         import base64
+        header = self.headers.get("Authorization")
+        if header is not None:
+            try:
+                base64.b64decode(header.split(" ", 1)[1], validate=True)
+            except (ValueError, IndexError):
+                self.send_response(400)
+                self.end_headers()
+                return
         esperado = "Basic " + base64.b64encode(b"demo:solo_ficticio_01!").decode()
         if self.headers.get("Authorization") == esperado:
-            self.send_response(200)
+            self.send_response(getattr(self.server, "estado_correcto", 200))
         else:
             self.send_response(401)
             self.send_header("WWW-Authenticate", 'Basic realm="lab"')
@@ -73,6 +81,26 @@ class WebExtraTests(unittest.TestCase):
             self.assertEqual(estado, 0)
             self.assertIn("Acceso HTTP Basic confirmado tras 3 intentos", salida.getvalue())
             self.assertNotIn("solo_ficticio_01!", salida.getvalue())
+        finally:
+            servidor.shutdown()
+            servidor.server_close()
+            hilo.join(timeout=2)
+
+    def test_web_basic_errores_no_confirman_acceso(self):
+        servidor = HTTPServer(("127.0.0.1", 0), ServidorBasic)
+        hilo = threading.Thread(target=servidor.serve_forever, daemon=True)
+        hilo.start()
+        try:
+            lista = Path(__file__).with_name("ejemplos") / "candidatos_web_ficticios.txt"
+            for estado in (302, 403, 429, 500):
+                with self.subTest(estado=estado):
+                    servidor.estado_correcto = estado
+                    salida = io.StringIO()
+                    with redirect_stdout(salida):
+                        rc = basic(f"http://127.0.0.1:{servidor.server_port}/admin",
+                                   "demo", lista, 5, pausa=0)
+                    self.assertEqual(rc, 3)
+                    self.assertNotIn("Acceso HTTP Basic confirmado", salida.getvalue())
         finally:
             servidor.shutdown()
             servidor.server_close()

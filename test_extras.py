@@ -16,6 +16,16 @@ from extras_web import ruta_lista
 
 BASE = Path(__file__).with_name("ejemplos") / "extras"
 AUDITOR = Path(__file__).with_name("auditor_generico.sh")
+MENU = {1: (1, 1), 2: (1, 2), 4: (1, 3), 5: (1, 4), 8: (1, 5),
+        9: (1, 6), 22: (1, 7), 3: (2, 1), 19: (2, 2), 14: (2, 3),
+        20: (2, 4), 6: (2, 5), 7: (2, 6), 13: (2, 7), 21: (2, 8),
+        10: (3, 1), 17: (3, 2), 11: (3, 3), 15: (4, 1), 16: (4, 2),
+        12: (4, 3), 18: (4, 4), 23: (4, 5)}
+
+
+def entrada_menu(opcion, parametros):
+    grupo, subopcion = MENU[opcion]
+    return f"{grupo}\n{subopcion}\n{parametros}"
 
 
 class ExtraTests(unittest.TestCase):
@@ -250,7 +260,7 @@ class ExtraTests(unittest.TestCase):
         # modo extra (opción 13)
         proceso = subprocess.run(
             ["bash", str(AUDITOR)],
-            input="13\nwlan0mon\n02:11:22:33:44:55\n\n\nplan\n",
+            input=entrada_menu(13, "wlan0mon\n02:11:22:33:44:55\n\n\nplan\n"),
             capture_output=True, text=True, timeout=10)
         self.assertEqual(proceso.returncode, 0, proceso.stderr)
         self.assertIn("Comando equivalente para repetir sin el menú:", proceso.stdout)
@@ -262,7 +272,7 @@ class ExtraTests(unittest.TestCase):
             objetivo.write_bytes(b"PK\x03\x04")
             proceso = subprocess.run(
                 ["bash", str(AUDITOR), "--dry-run"],
-                input=f"1\n{objetivo}\n1-2\nauto\n",
+                input=entrada_menu(1, f"{objetivo}\n1-2\nauto\n"),
                 capture_output=True, text=True, timeout=10)
             self.assertEqual(proceso.returncode, 0, proceso.stderr)
             self.assertIn("Comando equivalente para repetir sin el menú:", proceso.stdout)
@@ -270,7 +280,7 @@ class ExtraTests(unittest.TestCase):
                           proceso.stdout)
 
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
-        for opcion in range(6, 19):
+        for opcion in range(6, 24):
             with self.subTest(opcion=opcion):
                 if opcion in (6, 7):
                     entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
@@ -286,12 +296,24 @@ class ExtraTests(unittest.TestCase):
                     entradas = f"{opcion}\nhttp://127.0.0.1:9/wp\ndemo\n\n3\nplan\n"
                 elif opcion == 18:
                     entradas = f"{opcion}\nwlan0\n192.168.1.10\n192.168.1.1\n60\nplan\n"
+                elif opcion == 19:
+                    entradas = f"{opcion}\nwlan0\nRed Ficticia\n5\nplan\n"
+                elif opcion == 20:
+                    entradas = f"{opcion}\nwlan0\n02:11:22:33:44:55\n6\nplan\n"
+                elif opcion == 21:
+                    entradas = f"{opcion}\nwlan0mon\n02:11:22:33:44:55\n6\n5\n15\nplan\n"
+                elif opcion == 22:
+                    entradas = (f"{opcion}\n"
+                                f"{Path(__file__).with_name('README.md')}\n22000\nplan\n")
+                elif opcion == 23:
+                    entradas = f"{opcion}\ndemo\nplan\n"
                 else:
                     entradas = f"{opcion}\n" + "\n" * 6
+                entradas = entrada_menu(opcion, entradas.split("\n", 1)[1])
                 proceso = subprocess.run(["bash", str(AUDITOR)], input=entradas,
                                          capture_output=True, text=True, timeout=10)
                 self.assertEqual(proceso.returncode, 0, proceso.stderr)
-                self.assertIn("12) WASM: inventario estático", proceso.stdout)
+                self.assertIn("4) Otros", proceso.stdout)
                 self.assertIn("Plan:", proceso.stdout)
 
     def test_menu_web_resuelve_tilde_y_admite_lista_grande_acotada(self):
@@ -304,8 +326,8 @@ class ExtraTests(unittest.TestCase):
             ruta_con_tilde = "~/" + str(lista.relative_to(Path.home()))
             entorno = os.environ.copy()
             entorno["SUDO_USER"] = nombre_usuario
-            entradas = ("10\nhttps://ejemplo.invalid/wp-login.php\ndemo\n"
-                        f"{ruta_con_tilde}\n5\nplan\n")
+            entradas = entrada_menu(10, "https://ejemplo.invalid/wp-login.php\ndemo\n"
+                                    f"{ruta_con_tilde}\n5\nplan\n")
             proceso = subprocess.run(["bash", str(AUDITOR)], input=entradas,
                                      env=entorno, capture_output=True, text=True, timeout=10)
             self.assertEqual(proceso.returncode, 0, proceso.stderr)

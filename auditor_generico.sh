@@ -59,6 +59,9 @@ john_tool(){
 TIPO_ARG=auto
 NIVEL=1-3
 MOTOR_ARG=auto
+CPU_LIMIT=auto
+CPU_PREFIX=()
+CARGA=4
 MODO_ARG=
 TIEMPO_ARG=
 SEGUNDOS_ARG=
@@ -106,6 +109,7 @@ alias_modo(){
     mitm) printf 'mitm-arp';;
     ssh) printf 'ssh-brute';;
     cred) printf 'cred-scan';;
+    captura) printf 'captura-wifi';;
     *) printf '%s' "$1";;
   esac
 }
@@ -113,6 +117,7 @@ alias_modo(){
 es_modo_extra(){
   case "$(alias_modo "$1")" in
     web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|mitm-arp|ssh-brute|cred-scan|wasm) return 0;;
+    captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test) return 0;;
     *) return 1;;
   esac
 }
@@ -143,6 +148,13 @@ Tipos (--tipo):
   ssh-brute     intentos acotados de contraseña SSH con sshpass
   cred-scan     búsqueda de credenciales expuestas en ficheros (enmascarada)
   wasm          inventario estático de imports y exports
+  captura-wifi  lanza run_captura_wifi.sh (captura dirigida; alias: captura)
+  captura-wps   lanza run_captura_wifi_wps.sh (evidencia pasiva WPS)
+  reaver-largo  lanza run_reaver_largo.sh (ataque WPS PIN prolongado)
+  mascara-larga lanza run_mascara_larga.sh (máscaras largas reanudables)
+  variantes     lanza generar_variantes.py (listas derivadas de semillas)
+  demo          lanza demo_controles.py (demostración con datos ficticios)
+  test          lanza los tests del kit (python3 -m unittest)
 
 Niveles (--nivel): 1..5 o rango 1-3 (por defecto 1-3)
   1) probado inmediato          2) diccionarios comunes
@@ -157,7 +169,10 @@ Opciones:
   --tiempo N                   atajo según el modo: segundos para pmkid y
                                wps-scan; segundos bkcrack para zip-conocido;
                                minutos (--max-min) en objetivos offline
-  --motor auto|hashcat|john    motor principal (por defecto auto)
+  --motor auto|hashcat|john    motor principal (por defecto auto; alias: --tool)
+  --cpu N|auto                 limitar los motores a N núcleos de CPU con
+                               taskset (por defecto auto = sin límite)
+  --carga 1-4                  nivel de carga hashcat (-w; por defecto 4)
   --modo N                     modo hashcat para hash crudo (ej. 0, 1000)
   --formato NOMBRE             formato john si hay duda (auto por defecto)
   --dry-run                    plan sin motores/verificadores ni archivos nuevos
@@ -407,13 +422,13 @@ convertir(){
 }
 
 identificar_modos(){
-  timeout 240 "$HC" --identify "$HASHHC" 2>/dev/null \
+  timeout 240 "${CPU_PREFIX[@]}" "$HC" --identify "$HASHHC" 2>/dev/null \
     | awk -F'|' '/^ *[0-9]+ \|/{gsub(/ /,"",$1); if($1 ~ /^[0-9]+$/) print $1}'
 }
 
 probe_modo(){
   local out
-  out=$(timeout 300 "$HC" -m "$1" "$HASHHC" -a 3 '?d' --potfile-path "$POT" --quiet 2>&1)
+  out=$(timeout 300 "${CPU_PREFIX[@]}" "$HC" -m "$1" "$HASHHC" -a 3 '?d' --potfile-path "$POT" --quiet 2>&1)
   if printf '%s' "$out" | grep -qiE 'No hashes loaded|Token length exception|Separator missing|unsupported|Token out of range|Error #'; then
     return 1
   fi
@@ -483,7 +498,7 @@ detectar_formato_john(){
   [ -n "$FMTJ" ] && return 0
   [ "$MOTOR" = john ] || return 0
   local out
-  out=$(timeout 20 "$JOHN" --pot="$JPOT" --session="$DIR/ses_detect" --wordlist=/dev/null "$HASHJOHN" 2>&1)
+  out=$(timeout 20 "${CPU_PREFIX[@]}" "$JOHN" --pot="$JPOT" --session="$DIR/ses_detect" --wordlist=/dev/null "$HASHJOHN" 2>&1)
   FMTJ=$(printf '%s\n' "$out" | sed -n 's/.*Loaded [0-9]\+ password hash\{1,2\} (\([^ ,]*\).*/\1/p' | head -1)
   return 0
 }
@@ -496,7 +511,7 @@ calibrar_hashcat(){
     MEDIDA=${TASA_CACHE[$k]##* }
     return 0
   fi
-  out=$(timeout 300 "$HC" -b -w 4 -m "$1" 2>/dev/null)
+  out=$(timeout 300 "${CPU_PREFIX[@]}" "$HC" -b -w "$CARGA" -m "$1" 2>/dev/null)
   val=$(printf '%s\n' "$out" | awk '/Speed\.#/{for(i=1;i<=NF;i++){ if($i ~ /^[0-9]+\.?[0-9]*$/ && $(i+1) ~ /^(k|M|G)?H\/s$/){u=$(i+1); v=$i+0; if(u ~ /^k/) v=v*1000; else if(u ~ /^M/) v=v*1000000; else if(u ~ /^G/) v=v*1000000000; printf "%d", v; exit}}}')
   if [ -n "$val" ] && [ "$val" -gt 0 ]; then
     med=1
@@ -516,7 +531,7 @@ calibrar_john(){
   [ "$SIN_CAL" -eq 1 ] && return 0
   [ -n "$FMTJ" ] || return 0
   local out t
-  out=$(timeout 240 "$JOHN" --test=2 --format="$FMTJ" 2>&1)
+  out=$(timeout 240 "${CPU_PREFIX[@]}" "$JOHN" --test=2 --format="$FMTJ" 2>&1)
   t=$(printf '%s\n' "$out" | awk '
     {
       if (match($0, /[0-9]+(\.[0-9]+)?[ ]?[kKmMgG]?[ ]?[cp]\/s real/)) {
@@ -579,7 +594,7 @@ agregar_wl(){
   local nom=$1 cand=$2 wl=$3 regla=$4
   case "$MOTOR" in
     hashcat)
-      local -a args=("$HC" --restore-disable -w 4 -m "$MODO" --potfile-path "$POT" -a 0 "$HASHHC" "$wl")
+      local -a args=("$HC" --restore-disable -w "$CARGA" -m "$MODO" --potfile-path "$POT" -a 0 "$HASHHC" "$wl")
       [ -n "$regla" ] && args+=(-r "$RULES/$regla.rule")
       agregar_job "$nom" hashcat "$cand" "${args[@]}";;
     john)
@@ -596,7 +611,7 @@ agregar_wl(){
 agregar_mascara(){
   local nom=$1 cand=$2 m=$3
   case "$MOTOR" in
-    hashcat) agregar_job "$nom" hashcat "$cand" "$HC" --restore-disable -w 4 -m "$MODO" --potfile-path "$POT" -a 3 "$HASHHC" "$m";;
+    hashcat) agregar_job "$nom" hashcat "$cand" "$HC" --restore-disable -w "$CARGA" -m "$MODO" --potfile-path "$POT" -a 3 "$HASHHC" "$m";;
     john)
       local -a args=("$JOHN" "--pot=$JPOT" "--session=$DIR/ses_$nom" "--mask=$m")
       [ -n "$FMTJ" ] && args+=("--format=$FMTJ")
@@ -717,12 +732,12 @@ planificar(){
       if [ -n "$wl_az" ] && [ -n "$wl_d" ]; then
         cand=$(($(wc -l < "$wl_az") * $(wc -l < "$wl_d")))
         agregar_job "n4_comb_azul_x_dias" hashcat "$cand" \
-          "$HC" --restore-disable -w 4 -m "$MODO" --potfile-path "$POT" -a 1 "$HASHHC" "$wl_az" "$wl_d"
+          "$HC" --restore-disable -w "$CARGA" -m "$MODO" --potfile-path "$POT" -a 1 "$HASHHC" "$wl_az" "$wl_d"
       fi
       if [ -n "$wl_c" ]; then
         lines=$(wc -l < "$wl_c")
         agregar_job "n4_hibrido_custom_6digitos" hashcat "$((lines*1000000))" \
-          "$HC" --restore-disable -w 4 -m "$MODO" --potfile-path "$POT" -a 6 "$HASHHC" "$wl_c" '?d?d?d?d?d?d'
+          "$HC" --restore-disable -w "$CARGA" -m "$MODO" --potfile-path "$POT" -a 6 "$HASHHC" "$wl_c" '?d?d?d?d?d?d'
       fi
     fi
     if [ "$nivel" -eq 5 ]; then
@@ -881,7 +896,7 @@ ejecutar(){
     info "[$i/${#JOBS[@]}] $nom · $mot · ~$(fmt_tiempo "$(tiempo_trabajo "$cand" "$mot")")"
     case "$mot" in
       hashcat|john)
-        "${args_ref[@]}" </dev/null >>"$DIR/$nom.log" 2>&1;;
+        "${CPU_PREFIX[@]}" "${args_ref[@]}" </dev/null >>"$DIR/$nom.log" 2>&1;;
       rainbow)
         (cd "$RC_BIN" && "${args_ref[@]}") >>"$DIR/$nom.log" 2>&1;;
       externo)
@@ -1016,30 +1031,58 @@ mostrar_equivalente(){
   printf '\n\n'
 }
 
+seleccionar_objetivo(){
+  local grupo opcion titulo i
+  local -a nombres=() ids=()
+  while true; do
+    printf '=== Auditoría guiada ===\n'
+    printf '  1) Auditoría de ficheros\n  2) Auditoría WiFi\n  3) Auditoría Web\n  4) Otros\n  0) Salir\n'
+    grupo=$(preguntar 'Grupo' 0)
+    case "$grupo" in
+      0) exit 0;;
+      1)
+        titulo='Auditoría de ficheros'
+        nombres=('Fichero cifrado (rar/zip/7z/pdf/keepass)' 'Office / Excel' 'Hash suelto'
+                 'Formato propio con verificador externo' 'ZIP ZipCrypto: texto conocido'
+                 'PDF: permisos y clave de apertura' 'Máscaras largas reanudables')
+        ids=(1 2 4 5 8 9 22);;
+      2)
+        titulo='Auditoría WiFi'
+        nombres=('Analizar captura o hash WPA' 'Captura dirigida' 'Escaneo pasivo WPS'
+                 'Evidencia pasiva WPS' 'WPS PIN: prueba acotada' 'Captura PMKID dirigida'
+                 'Desautenticación' 'WPS PIN: prueba prolongada')
+        ids=(3 19 14 20 6 7 13 21);;
+      3)
+        titulo='Auditoría Web'
+        nombres=('Acceso tipo WordPress' 'Autenticación HTTP Basic' 'SQLi booleana en formulario GET')
+        ids=(10 17 11);;
+      4)
+        titulo=Otros
+        nombres=('SSH: prueba de contraseña' 'Buscar credenciales expuestas' 'Inventario WASM'
+                 'MITM ARP' 'Utilidades: demo / variantes / tests')
+        ids=(15 16 12 18 23);;
+      *) err "grupo desconocido: $grupo"; continue;;
+    esac
+    while true; do
+      printf '\n=== %s ===\n' "$titulo"
+      for ((i=0; i<${#nombres[@]}; i++)); do printf '  %d) %s\n' "$((i+1))" "${nombres[$i]}"; done
+      printf '  0) Volver\n'
+      opcion=$(preguntar 'Auditoría' 0)
+      [ "$opcion" = 0 ] && break
+      if [[ "$opcion" =~ ^[1-9]$ ]] && [ "$opcion" -le "${#ids[@]}" ]; then
+        OP_GUIA=${ids[$((opcion-1))]}
+        return 0
+      fi
+      err "opción de menú desconocida: $opcion"
+    done
+  done
+}
+
 guia(){
-  printf '=== Auditoría guiada de contraseñas ===\n'
-  printf '  1) Fichero cifrado (rar/zip/7z/pdf/keepass...)\n'
-  printf '  2) Office / Excel\n'
-  printf '  3) WiFi (captura .cap/.pcap o hash .22000)\n'
-  printf '  4) Hash suelto\n'
-  printf '  5) Formato no reconocido (.xdf) con verificador externo\n'
-  printf '  6) WiFi: WPS PIN (observación y prueba acotada)\n'
-  printf '  7) WiFi: captura PMKID dirigida\n'
-  printf '  8) ZIP ZipCrypto: ataque de texto conocido\n'
-  printf '  9) PDF: permisos frente a clave de apertura\n'
-  printf ' 10) Web: intentos de acceso tipo WordPress\n'
-  printf ' 11) Web: indicios de inyección SQL booleana\n'
-  printf ' 12) WASM: inventario estático\n'
-  printf ' 13) WiFi: inyectar desautenticación (forzar handshake)\n'
-  printf ' 14) WiFi: escaneo de objetivos WPS vulnerables\n'
-  printf ' 15) SSH: intentos acotados de contraseña (sshpass)\n'
-  printf ' 16) Credenciales: búsqueda de secretos expuestos en ficheros\n'
-  printf ' 17) Web: intentos contra autenticación HTTP Basic\n'
-  printf ' 18) MITM: envenenamiento ARP acotado (bettercap, red propia)\n'
-  local op
-  op=$(preguntar "Tipo de objetivo" 1)
+  seleccionar_objetivo
+  local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18) guia_extra "$op";;
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23) guia_extra "$op";;
   esac
   case "$op" in
     1) TIPO_ARG=archivo;;
@@ -1145,6 +1188,37 @@ guia_extra(){
       valor=$(preguntar 'IPv4 del gateway (vacío = el por defecto del sistema)' '')
       [ -n "$valor" ] && parametros+=(--gateway "$valor")
       parametros+=(--segundos "$(preguntar 'Duración del envenenamiento en segundos (10-3600)' 60)");;
+    19)
+      tipo=captura-wifi
+      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi' wlan0)")
+      parametros+=(--ssid "$(preguntar 'SSID de la red autorizada' '')")
+      parametros+=(--minutos "$(preguntar 'Minutos de captura (1-600)' 10)");;
+    20)
+      tipo=captura-wps
+      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi' wlan0)")
+      parametros+=(--bssid "$(preguntar 'BSSID del AP autorizado' '')")
+      parametros+=(--canal "$(preguntar 'Canal' '')");;
+    21)
+      tipo=reaver-largo
+      parametros+=(--interfaz "$(preguntar 'Interfaz ya en modo monitor' wlan0mon)")
+      parametros+=(--bssid "$(preguntar 'BSSID del AP autorizado' '')")
+      parametros+=(--canal "$(preguntar 'Canal' '')")
+      parametros+=(--intentos-ronda "$(preguntar 'PINs por ronda' 10)")
+      parametros+=(--retardo "$(preguntar 'Segundos entre PINs' 15)");;
+    22)
+      tipo=mascara-larga
+      parametros+=(--hash "$(ruta_guiada "$(preguntar 'Ruta del archivo de hash (.22000 u otro modo)' '')")")
+      parametros+=(--modo "$(preguntar 'Modo numérico de hashcat' 22000)");;
+    23)
+      case "$(preguntar 'Utilidad (demo / variantes / test)' demo)" in
+        demo) tipo=demo;;
+        test) tipo=test;;
+        variantes)
+          tipo=variantes
+          parametros+=(--salida "$(ruta_guiada "$(preguntar 'Directorio de salida de variantes' '~/auditoria_variantes')")")
+          parametros+=("$(ruta_guiada "$(preguntar 'Lista semilla' "$SCRIPT_DIR/ejemplos/semillas_ficticias.txt")")");;
+        *) err "utilidad desconocida"; exit 2;;
+      esac;;
   esac
   if [ "$DRY" -eq 1 ]; then
     accion=plan
@@ -1184,13 +1258,16 @@ parsear(){
         [ $# -ge 2 ] && [[ "$2" != --* ]] || { err "falta valor para $1"; exit 2; }
         [[ "$2" =~ ^[0-9]+$ ]] || { err "--tiempo debe ser un entero"; exit 2; }
         TIEMPO_ARG=$2; shift 2;;
-      --tipo|--nivel|--motor|--formato|--max-min|--wl|--externo-cmd|--rainbow-dir)
+      --tipo|--nivel|--motor|--tool|--formato|--max-min|--wl|--externo-cmd|--rainbow-dir|--cpu|--carga)
         [ $# -ge 2 ] && [[ "$2" != --* ]] || { err "falta valor para $1"; exit 2; }
         case "$1" in
-          --tipo) TIPO_ARG=$2;; --nivel) NIVEL=$2;; --motor) MOTOR_ARG=$2;;
+          --tipo) TIPO_ARG=$2;; --nivel) NIVEL=$2;;
+          --motor|--tool) MOTOR_ARG=$2;;
           --formato) FMTJ_ARG=$2;;
           --max-min) MAXMIN=$2;; --wl) WL_ARG=$2;;
           --externo-cmd) EXT_CMD=$2;; --rainbow-dir) RC_TAB=$2;;
+          --cpu) CPU_LIMIT=$2;;
+          --carga) CARGA=$2;;
         esac
         shift 2;;
       --dry-run) DRY=1; shift;;
@@ -1214,6 +1291,27 @@ parsear(){
   [ -z "$MODO_ARG" ] || [[ "$MODO_ARG" =~ ^[0-9]+$ ]] || { err "--modo debe ser numérico"; exit 2; }
   case "$TIPO_ARG" in auto|archivo|office|wifi|hash|externo) ;; *) err "--tipo desconocido: $TIPO_ARG"; exit 2;; esac
   case "$MOTOR_ARG" in auto|hashcat|john) ;; *) err "--motor desconocido: $MOTOR_ARG"; exit 2;; esac
+  case "$CPU_LIMIT" in auto) ;; *[!0-9]*|'') err "--cpu debe ser auto o un entero"; exit 2;; esac
+  if [[ "$CPU_LIMIT" =~ ^[0-9]+$ ]]; then
+    [ "${#CPU_LIMIT}" -le 5 ] || { err "--cpu demasiado grande"; exit 2; }
+    CPU_LIMIT=$((10#$CPU_LIMIT))
+    if ! command -v taskset >/dev/null 2>&1; then
+      aviso "--cpu ignorado: taskset no está instalado"
+    else
+      local cpus
+      cpus=$(python3 - "$CPU_LIMIT" <<'PY'
+import os, sys
+disponibles = sorted(os.sched_getaffinity(0))
+n = int(sys.argv[1])
+if not 1 <= n <= len(disponibles):
+    sys.exit(f'--cpu debe estar entre 1 y {len(disponibles)}')
+print(','.join(map(str, disponibles[:n])))
+PY
+      ) || exit 2
+      CPU_PREFIX=(taskset -c "$cpus")
+    fi
+  fi
+  case "$CARGA" in [1-4]) ;; *) err "--carga debe ser 1..4"; exit 2;; esac
   parsear_nivel
   WL_CUSTOM=()
   if [ -n "$WL_ARG" ]; then
@@ -1276,6 +1374,31 @@ despachar_extra(){
     fi
   done
   tipo=$(alias_modo "$tipo")
+  case "$tipo" in
+    captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test)
+      # estos lanzadores no conocen --dry-run: se intercepta aquí
+      local -a sin_dry=() target=()
+      local seco=0
+      for arg in "${restantes[@]}"; do
+        if [ "$arg" = --dry-run ]; then seco=1; else sin_dry+=("$arg"); fi
+      done
+      case "$tipo" in
+        captura-wifi) target=(bash "$SCRIPT_DIR/run_captura_wifi.sh");;
+        captura-wps) target=(bash "$SCRIPT_DIR/run_captura_wifi_wps.sh");;
+        reaver-largo) target=(bash "$SCRIPT_DIR/run_reaver_largo.sh");;
+        mascara-larga) target=(bash "$SCRIPT_DIR/run_mascara_larga.sh");;
+        variantes) target=(python3 "$SCRIPT_DIR/generar_variantes.py");;
+        demo) target=(python3 "$SCRIPT_DIR/demo_controles.py");;
+        test) target=(python3 -m unittest -v test_kit test_extras
+                       test_extras_web test_wifi_capture test_wps_capture test_regresiones);;
+      esac
+      if [ "$seco" -eq 1 ]; then
+        printf 'Plan: %s %s\n' "${target[*]}" "${sin_dry[*]}"
+        exit 0
+      fi
+      [ "$tipo" != test ] || cd "$SCRIPT_DIR" || exit 2
+      exec "${target[@]}" ${sin_dry[@]+"${sin_dry[@]}"};;
+  esac
   if [ -n "$tiempo" ]; then
     case "$tipo" in
       wifi-pmkid|wifi-wps-scan|mitm-arp)

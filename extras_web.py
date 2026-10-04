@@ -159,26 +159,65 @@ def basic(url, usuario, lista, limite, seco=False, pausa=1):
         return 0
     import base64
     opener = build_opener(SinRedireccion())
-    hechos = 0
-    for candidato in candidatos(lista, limite):
-        credencial = base64.b64encode(f"{usuario}:{candidato}".encode()).decode()
-        peticion = Request(url, headers={"User-Agent": "kit-auditoria-claves/1.0",
-                                         "Authorization": f"Basic {credencial}"})
+
+    def consultar(credencial=None):
+        headers = {"User-Agent": "kit-auditoria-claves/1.0"}
+        if credencial is not None:
+            headers["Authorization"] = f"Basic {credencial}"
+        peticion = Request(url, headers=headers)
         try:
             respuesta = opener.open(peticion, timeout=20)
             estado = respuesta.status
+            cabeceras = respuesta.headers
             respuesta.close()
+            return estado, cabeceras
         except HTTPError as exc:
-            estado = exc.code
+            estado, cabeceras = exc.code, exc.headers
+            exc.close()
+            return estado, cabeceras
         except (URLError, TimeoutError) as exc:
-            print(f"Error de conexión en el intento {hechos + 1}; estado desconocido: {exc}")
+            print(f"Error de conexión; estado desconocido: {exc}")
+            return None
+
+    # Comprobar el reto sin enviar una credencial de autenticación.
+    sonda = consultar()
+    if sonda is None:
+        return 3
+    estado_sonda, cabeceras = sonda
+    if estado_sonda != 401 or "basic" not in cabeceras.get("WWW-Authenticate", "").lower():
+        print(f"El recurso respondió {estado_sonda} sin un reto HTTP Basic; test no aplicable")
+        return 3
+    hechos = 0
+    for candidato in candidatos(lista, limite):
+        credencial = base64.b64encode(f"{usuario}:{candidato}".encode()).decode()
+        respuesta = consultar(credencial)
+        if respuesta is None:
             return 3
+        estado, _ = respuesta
         hechos += 1
-        if estado not in {401, 403, 407}:
+        if estado == 401:
+            if hechos < limite:
+                time.sleep(pausa)
+            continue
+        if estado in {403, 407}:
+            print(f"Control o restricción HTTP {estado}; resultado inconcluyente")
+            return 3
+        if estado == 429:
+            print(f"Bloqueado por límite de peticiones (429) tras {hechos} intentos; "
+                  "resultado inconcluyente")
+            return 3
+        if 500 <= estado <= 599:
+            print(f"Error del servidor ({estado}) en el intento {hechos}; resultado inconcluyente")
+            return 3
+        if 300 <= estado <= 399:
+            print(f"Redirección ({estado}) tras {hechos} intentos: posible acceso pero "
+                  "requiere confirmación manual; no se declara éxito")
+            return 3
+        if 200 <= estado <= 299:
             print(f"Acceso HTTP Basic confirmado tras {hechos} intentos; candidato oculto")
             return 0
-        if hechos < limite:
-            time.sleep(pausa)
+        print(f"Estado inesperado {estado} tras {hechos} intentos; resultado inconcluyente")
+        return 3
     unidad = "intento" if hechos == 1 else "intentos"
     print(f"Sin acceso en {hechos} {unidad}; no demuestra que la contraseña sea fuerte")
     return 1

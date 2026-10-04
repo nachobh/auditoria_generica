@@ -28,6 +28,7 @@ kit-auditoria-claves/
 ├── run_captura_wifi.sh          captura WiFi dirigida y configurable
 ├── run_captura_wifi_wps.sh      observación WPS y captura breve de evidencia
 ├── run_reaver_largo.sh          ataque WPS PIN prolongado con reintentos
+├── run_mascara_larga.sh          máscaras largas (10-12) reanudables con hashcat
 ├── extras_wifi.py               WPS PIN, PMKID, inyección deauth y escaneo WPS acotados
 ├── extras_mitm.py               envenenamiento ARP acotado con bettercap (red propia)
 ├── extras_archivos.py           ZipCrypto y permisos PDF
@@ -132,8 +133,13 @@ Modo guiado (menú de tipo de objetivo, ruta y niveles):
 ./auditor_generico.sh
 ```
 
-El menú incluye los siete modos adicionales (opciones 6–12). Cada uno solicita
-sus parámetros y propone **plan** como acción predeterminada, sin enviar
+El menú padre agrupa todas las opciones en **1) Auditoría de ficheros**,
+**2) Auditoría WiFi**, **3) Auditoría Web** y **4) Otros**. Cada submenú
+permite volver con `0`; en el menú padre, `0` termina la sesión. Ficheros incluye
+Office, hashes, ZipCrypto, permisos PDF y máscaras; Otros incluye SSH,
+credenciales, WASM, MITM y utilidades (demo, variantes y tests).
+Los modos adicionales solicitan sus parámetros y proponen **plan** como acción
+predeterminada, sin enviar
 intentos ni capturar tráfico. Elige **prueba** para ejecutarlo con los límites
 indicados. Los ejemplos de archivos y web aparecen como valores iniciales;
 puedes sustituirlos por objetivos autorizados.
@@ -202,6 +208,30 @@ archivos), `--ampliar`, `--yes` (sin preguntar), `--guardar-secretos` (conserva 
 `--max-min N` (omite trabajos estimados sobre N minutos), `--sin-calibrar`
 (estimaciones sin medir), `--wl lista1,lista2` (sustituye niveles 1-2),
 `--formato NOMBRE` (formato john si hay duda), `--rainbow-dir DIR`.
+
+Elección de motor y límite de recursos: `--motor auto|hashcat|john` fuerza el
+motor (por defecto `auto`; `--tool` es su alias) y en el menú guiado se pregunta
+igual. `--cpu N` limita los motores y su calibración a N núcleos disponibles
+en la afinidad del proceso con `taskset` (por defecto
+`auto` = sin límite; útil para no saturar la máquina mientras trabaja otra
+cosa). `--carga 1-4` fija el nivel de carga de hashcat `-w` (por defecto 4;
+bájalo a 1-2 si el escritorio se queda sin respuesta). John no tiene opción
+equivalente a `-w`: para acotarlo usa `--cpu`.
+
+Lanzadores integrados: `--modo` también lanza los scripts del kit con sus
+propios argumentos: `captura`/`captura-wifi` (run_captura_wifi.sh),
+`captura-wps`, `reaver-largo`, `mascara-larga`, `variantes`
+(generar_variantes.py), `demo` (demo_controles.py) y `test` (los seis
+módulos de unittest). Con `--dry-run` muestran el comando sin ejecutarlo.
+Las capturas y WPS prolongado están en WiFi; máscaras en Ficheros; las
+utilidades están en Otros. Variantes solicita semilla y directorio de salida.
+El lanzador de tests funciona desde cualquier directorio.
+
+`run_mascara_larga.sh` se distribuye con el kit. Separa las sesiones por ruta
+y contenido del hash, modo, charset, carga y directorio de trabajo; los logs
+y potfiles quedan privados fuera del repositorio. Repite los mismos parámetros
+para reanudar. Los estados antiguos con nombres `m22000_l10` no se reutilizan
+automáticamente: conserva esos archivos si necesitas recuperar un trabajo previo.
 
 `--help` imprime toda la ayuda.
 Un hash hexadecimal sin metadatos es ambiguo: para hashcat, indica siempre
@@ -405,7 +435,7 @@ sudo ./auditor_generico.sh --tipo wifi-wps-scan --interfaz wlan0mon --canal 6 --
 clientes legítimos y los obliga a rehacer el 4-way handshake, que capturas
 mientras con `airodump-ng` o `hcxdumptool`. Si el kernel rechaza los paquetes
 ("send failed"), la interfaz no está realmente en modo monitor con inyección.
-`wifi-wps-scan` es pasivo: marca cada AP como `vulnerable` (WPS sin bloqueo
+`wifi-wps-scan` es pasivo: marca cada AP como `sin bloqueo anunciado` (WPS sin bloqueo
 anunciado) o `bloqueado`, y sugiere el comando `wifi-wps-pin` para los
 candidatos.
 
@@ -489,7 +519,7 @@ funciona y rinde ~65 000 contraseñas/s con el handshake completo.
 ### Cuántos intentos PIN hacen falta (Reaver)
 
 El PIN WPS son 8 dígitos, pero el protocolo lo divide en dos mitades con
-checksum: el espacio real es 10⁴ × 10³ = **11 000 PINs** (10 000 de la primera
+checksum: el espacio efectivo de búsqueda es 10⁴ + 10³ = **11 000 pruebas** (10 000 de la primera
 mitad + 1 000 de la segunda por cada mitad acertada). De ahí:
 
 | Escenario | Cálculo | Tiempo |
@@ -506,8 +536,8 @@ Un ataque real necesita miles de intentos encadenados, y ahí entra el
 script prolongado:
 
 ```bash
-sudo ./run_reaver_largo.sh --interfaz wlp195s0mon \
-  --bssid F0:86:20:84:B1:66 --canal 1 \
+sudo ./run_reaver_largo.sh --interfaz wlan0mon \
+  --bssid AA:BB:CC:DD:EE:FF --canal 1 \
   --intentos-ronda 10 --retardo 15 --espera-bloqueo 900 --rondas-max 24
 ```
 
@@ -523,7 +553,7 @@ anuncian el bloqueo en los beacons pero lo aplican en la práctica: Reaver
 asocia, envía EAPOL-START e identidad WPS, y el router responde con un
 deauth repetido (`[+] Received deauth request` en bucle) sin dejar avanzar
 la transacción PIN. El `wash` del escaneo pasivo marca esos APs como
-`vulnerable` porque el beacon no dice lo contrario: el bloqueo real sólo se
+`sin bloqueo anunciado` porque el beacon no dice lo contrario: el bloqueo real sólo se
 descubre al intentar el PIN. El script prolongado lo tolera (reintenta tras
 la espera), pero si el bucle de deauth persiste ronda tras ronda, el AP está
 efectivamente cerrado al método PIN y conviene pasar a PMKID/handshake.
@@ -573,6 +603,8 @@ privadas, tokens y parámetros `password=` en ficheros de texto de hasta 2 MB
 (excluye `.git`, `node_modules`…); imprime los valores enmascarados y
 `--generar` escribe las contraseñas candidatas para reutilizarlas con
 `ssh-brute`, `web-login` o el crackeo offline.
+El escaneo omite enlaces simbólicos y rechaza un enlace como objetivo principal.
+La lista exportada usa un temporal exclusivo y permisos `0600`.
 
 ### Dos pruebas de archivos
 
@@ -697,7 +729,7 @@ Sin descargar ninguna lista:
 ```bash
 bash -n auditor_generico.sh wordlists/descargar_wordlists.sh rainbowcrack/build.sh
 bash -n run_captura_wifi.sh run_captura_wifi_wps.sh
-python3 -m unittest -v test_kit test_wifi_capture test_wps_capture test_extras
+python3 -m unittest -v test_kit test_wifi_capture test_wps_capture test_extras test_regresiones
 # test_extras_web abre un socket local y se ejecuta donde estén permitidos:
 python3 -m unittest -v test_extras_web
 python3 demo_controles.py
