@@ -2,6 +2,7 @@
 set -uo pipefail
 export LC_ALL=C
 
+VERSION="1.1.0"
 SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
@@ -187,6 +188,7 @@ Opciones:
   --externo-cmd 'CMD %F %P'    verificador externo para formato externo
                                (%P=candidato, %F=fichero; argumentos independientes)
   --rainbow-dir DIR            directorio con tablas .rt para rcrack
+  --version                    versión del script
   --help                       esta ayuda
 
 Ejemplos:
@@ -1260,6 +1262,7 @@ parsear_nivel(){
 parsear(){
   while [ $# -gt 0 ]; do
     case "$1" in
+      --version) printf 'auditor_generico %s\n' "$VERSION"; exit 0;;
       --help|-h) uso; exit 0;;
       --modo)
         [ $# -ge 2 ] && [[ "$2" != --* ]] || { err "falta valor para $1"; exit 2; }

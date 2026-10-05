@@ -1,5 +1,8 @@
 # kit-auditoria-claves
 
+Licencia MIT · `auditor_generico.sh --version` · registro de cambios en
+[CHANGELOG.md](CHANGELOG.md)
+
 Base común para auditorías de contraseñas: un único script guiado (`auditor_generico.sh`)
 que va de lo simple a lo complejo, con los wordlists, las reglas de ataque y (opcional)
 RainbowCrack compilable desde la fuente incluida.
@@ -23,12 +26,14 @@ Para una auditoría pequeña de varios patrones, consulta
 ```text
 kit-auditoria-claves/
 ├── auditor_generico.sh          script principal (menú guiado o CLI)
+├── LICENSE                      MIT
+├── CHANGELOG.md                 registro de cambios (Keep a Changelog)
 ├── demo_controles.py            demo pequeña con datos ficticios
 ├── generar_variantes.py         variantes acotadas de semillas autorizadas
 ├── run_captura_wifi.sh          captura WiFi dirigida y configurable
 ├── run_captura_wifi_wps.sh      observación WPS y captura breve de evidencia
 ├── run_reaver_largo.sh          ataque WPS PIN prolongado con reintentos
-├── run_mascara_larga.sh          máscaras largas (10-12) reanudables con hashcat
+├── run_mascara_larga.sh         máscaras largas (10-12) reanudables con hashcat
 ├── extras_wifi.py               WPS PIN, PMKID, inyección deauth y escaneo WPS acotados
 ├── extras_mitm.py               envenenamiento ARP acotado con bettercap (red propia)
 ├── extras_archivos.py           ZipCrypto y permisos PDF
@@ -41,8 +46,9 @@ kit-auditoria-claves/
 ├── wps_capture_utils.py         extrae sólo el estado WPS del AP elegido
 ├── test_wifi_capture.py         pruebas con redes y hashes ficticios
 ├── test_wps_capture.py          pruebas de la observación WPS
-├── test_extras.py                pruebas de modos extra sin radio
-├── test_extras_web.py            pruebas del laboratorio web local
+├── test_extras.py               pruebas de modos extra sin radio
+├── test_extras_web.py           pruebas del laboratorio web local
+├── test_regresiones.py          guarda los arreglos de regresiones pasadas
 ├── test_kit.py                  pruebas sin credenciales reales
 ├── PRESENTACION.md              guion breve para el equipo
 ├── README.md                    este archivo
@@ -589,7 +595,7 @@ LAN. En red propia está claro; en redes ajenas interceptar tráfico ajeno sin
 autorización toca el art. 197 CP (secreto de las comunicaciones) además de la
 LSSI. Bettercap 2.x usa `-iface`/`-silent` (no `-I`/`--no-ui` de la 1.x).
 
-### SSH y credenciales
+### SSH, FTP y credenciales
 
 ```bash
 ./auditor_generico.sh --tipo ssh-brute --host 192.168.1.50 --usuario ana \
@@ -602,7 +608,11 @@ LSSI. Bettercap 2.x usa `-iface`/`-silent` (no `-I`/`--no-ui` de la 1.x).
 `ssh-brute` usa `sshpass` con una sola pregunta de contraseña por candidato
 (`NumberOfPasswordPrompts=1`), acepta la host key la primera vez y se detiene
 si el servidor empieza a limitar. Requiere autorización sobre el destino: los
-intentos quedan en el `auth.log` del servidor. `cred-scan` busca claves
+intentos quedan en el `auth.log` del servidor. `ftp-brute` hace lo propio con
+`ftplib` (sin dependencias externas): un intento por candidato, sin imprimir
+ni guardar contraseñas, y para ante una respuesta 421 o un corte de conexión
+para no castigar al servidor. Anónimos: `anonymous` es el usuario por defecto
+del menú. `cred-scan` busca claves
 privadas, tokens y parámetros `password=` en ficheros de texto de hasta 2 MB
 (excluye `.git`, `node_modules`…); imprime los valores enmascarados y
 `--generar` escribe las contraseñas candidatas para reutilizarlas con
