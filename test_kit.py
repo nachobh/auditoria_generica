@@ -17,6 +17,13 @@ SEMILLAS = Path(__file__).with_name("ejemplos") / "semillas_ficticias.txt"
 
 
 class KitTests(unittest.TestCase):
+    def test_version_imprime_semver_y_sale_cero(self):
+        proceso = subprocess.run(["bash", str(SCRIPT), "--version"],
+                                 capture_output=True, text=True, timeout=10)
+        self.assertEqual(proceso.returncode, 0)
+        self.assertRegex(proceso.stdout,
+                         r"^auditor_generico \d+\.\d+\.\d+\n$")
+
     def test_demo_usa_datos_sinteticos_y_controles(self):
         datos = resumen()
         self.assertEqual(datos["candidatos_ficticios"], 8)
