@@ -6,6 +6,8 @@ versionado según [SemVer](https://semver.org/lang/es/).
 ## [1.1.0] — 2026-10-05
 
 ### Añadido
+- Wordlists en español (Pwdb común, lang-spanish, Moby, RAE y usuarios/contraseñas
+  de SecLists) en el manifiesto y en los niveles 1 y 3 del auditor.
 - `ftp-brute`: intentos de contraseña FTP acotados con `ftplib` (hasta 200,
   un intento por candidato, se detiene ante 421 o error de conexión).
 - `mitm-arp`: envenenamiento ARP acotado con bettercap (10–3600 s),
