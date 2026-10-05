@@ -34,6 +34,7 @@ kit-auditoria-claves/
 ├── extras_archivos.py           ZipCrypto y permisos PDF
 ├── extras_web.py                login WordPress, HTTP Basic y SQLi booleana acotados
 ├── extras_ssh.py                intentos SSH acotados con sshpass
+├── extras_ftp.py                intentos FTP acotados con ftplib
 ├── extras_credenciales.py       búsqueda de secretos expuestos en ficheros
 ├── extras_wasm.py               inventario estático de módulos WASM
 ├── wifi_capture_utils.py        selección de AP y filtrado WPA 22000
@@ -400,7 +401,8 @@ BSSID ni contraseñas reales. `--dry-run` valida el plan sin conectarse al objet
 | `wifi-wps-scan` | `wash -a` pasivo 10–1200 s | lista APs con WPS y si anuncian bloqueo; pasivo, no envía paquetes |
 | `mitm-arp` | envenenamiento ARP con `bettercap` (10–3600 s) | redirige el tráfico del objetivo por esta máquina; interrumpe la LAN y es visible para sus usuarios |
 | `ssh-brute` | hasta 200 intentos de contraseña SSH con `sshpass` | un intento por candidato, `NumberOfPasswordPrompts=1`; se detiene si el servidor limita |
-| `cred-scan` | patrones de secretos en ficheros de texto | salida enmascarada; `--generar` guarda candidatos para otras auditorías |
+| `ftp-brute` | hasta 200 intentos de contraseña FTP con `ftplib` | un intento por candidato; para ante 421 o error de conexión |
+| `cred-scan` | patrones de secretos en ficheros de texto | salida enmascarada; `--generar` guarda candidatos para otras auditorías; detecta `github_pat_`, `glpat-`, `npm_`, `dckr_pat_` |
 | `zip-conocido` | texto conocido contra ZipCrypto | no afecta a ZIP con AES |
 | `pdf-permisos` | apertura de PDF con restricciones de copia | no elude una contraseña necesaria para abrir el PDF |
 | `web-login` | hasta 50 intentos de login tipo WordPress | no guarda ni imprime candidatos; se detiene ante HTTP 403/429 |
@@ -591,6 +593,8 @@ LSSI. Bettercap 2.x usa `-iface`/`-silent` (no `-I`/`--no-ui` de la 1.x).
 
 ```bash
 ./auditor_generico.sh --tipo ssh-brute --host 192.168.1.50 --usuario ana \
+  --wl ejemplos/candidatos_web_ficticios.txt --limite-intentos 3 --dry-run
+./auditor_generico.sh --tipo ftp-brute --host 192.168.1.50 --usuario ftp \
   --wl ejemplos/candidatos_web_ficticios.txt --limite-intentos 3 --dry-run
 ./auditor_generico.sh --tipo cred-scan ~/proyecto --generar /tmp/candidatos.txt
 ```

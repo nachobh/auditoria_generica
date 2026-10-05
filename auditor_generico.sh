@@ -108,6 +108,7 @@ alias_modo(){
     deauth) printf 'wifi-deauth';;
     mitm) printf 'mitm-arp';;
     ssh) printf 'ssh-brute';;
+    ftp) printf 'ftp-brute';;
     cred) printf 'cred-scan';;
     captura) printf 'captura-wifi';;
     *) printf '%s' "$1";;
@@ -116,7 +117,7 @@ alias_modo(){
 
 es_modo_extra(){
   case "$(alias_modo "$1")" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|mitm-arp|ssh-brute|cred-scan|wasm) return 0;;
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
     captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test) return 0;;
     *) return 1;;
   esac
@@ -146,6 +147,7 @@ Tipos (--tipo):
   wifi-wps-scan escaneo pasivo de objetivos WPS con wash
   mitm-arp      envenenamiento ARP acotado (bettercap) en red propia o autorizada
   ssh-brute     intentos acotados de contraseña SSH con sshpass
+  ftp-brute     intentos acotados de contraseña FTP con ftplib
   cred-scan     búsqueda de credenciales expuestas en ficheros (enmascarada)
   wasm          inventario estático de imports y exports
   captura-wifi  lanza run_captura_wifi.sh (captura dirigida; alias: captura)
@@ -163,7 +165,7 @@ Niveles (--nivel): 1..5 o rango 1-3 (por defecto 1-3)
 
 Opciones:
   --modo NOMBRE                alias de --tipo con nombres cortos:
-                               wps, wps-scan, pmkid, deauth, ssh, cred,
+                               wps, wps-scan, pmkid, deauth, ssh, ftp, cred,
                                web-login, web-basic, web-sqli, zip-conocido,
                                pdf-permisos, wasm (o el nombre largo completo)
   --tiempo N                   atajo según el modo: segundos para pmkid y
@@ -233,7 +235,7 @@ confirmar(){
   if [ "$SI" -eq 1 ]; then return 0; fi
   local r
   read -r -p "$1 [s/N]: " r || r=""
-  case "$r" in s|S|si|SI|si|Si|sí|Sí) return 0;; *) return 1;; esac
+  case "$r" in s|S|si|SI|Si|sí|Sí) return 0;; *) return 1;; esac
 }
 
 fmt_tiempo(){
@@ -296,6 +298,8 @@ if b[:4] == b'WPA*':
     print('wifi22000'); sys.exit()
 if b[:6] == b'$WPAPSK' or b'WPAPSK' in b[:64]:
     print('wifi_john'); sys.exit()
+if b[:4] == b'\x03\xd9\xa2\x9a':
+    print('keepass'); sys.exit()
 s = b.decode('latin1', 'replace').strip()
 s = s.split()[0] if s.split() else s
 if s and all(c in '0123456789abcdefABCDEF' for c in s) and len(s) in (16, 32, 40, 64):
@@ -1058,9 +1062,10 @@ seleccionar_objetivo(){
         ids=(10 17 11);;
       4)
         titulo=Otros
-        nombres=('SSH: prueba de contraseña' 'Buscar credenciales expuestas' 'Inventario WASM'
+        nombres=('SSH: prueba de contraseña' 'FTP: prueba de contraseña'
+                 'Buscar credenciales expuestas' 'Inventario WASM'
                  'MITM ARP' 'Utilidades: demo / variantes / tests')
-        ids=(15 16 12 18 23);;
+        ids=(15 24 16 12 18 23);;
       *) err "grupo desconocido: $grupo"; continue;;
     esac
     while true; do
@@ -1082,7 +1087,7 @@ guia(){
   seleccionar_objetivo
   local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23) guia_extra "$op";;
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24) guia_extra "$op";;
   esac
   case "$op" in
     1) TIPO_ARG=archivo;;
@@ -1167,6 +1172,12 @@ guia_extra(){
       tipo=ssh-brute
       parametros+=(--host "$(preguntar 'Destino SSH (host o host:puerto) autorizado' 127.0.0.1)")
       parametros+=(--usuario "$(preguntar 'Usuario' demo)")
+      parametros+=(--wl "$(ruta_guiada "$(preguntar 'Lista de candidatos ficticios o autorizados' "$SCRIPT_DIR/ejemplos/candidatos_web_ficticios.txt")")")
+      parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-200)' 3)");;
+    24)
+      tipo=ftp-brute
+      parametros+=(--host "$(preguntar 'Destino FTP (host o host:puerto) autorizado' 127.0.0.1)")
+      parametros+=(--usuario "$(preguntar 'Usuario' anonymous)")
       parametros+=(--wl "$(ruta_guiada "$(preguntar 'Lista de candidatos ficticios o autorizados' "$SCRIPT_DIR/ejemplos/candidatos_web_ficticios.txt")")")
       parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-200)' 3)");;
     16)
@@ -1416,6 +1427,7 @@ despachar_extra(){
     wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan) modulo=extras_wifi.py;;
     mitm-arp) modulo=extras_mitm.py;;
     ssh-brute) modulo=extras_ssh.py;;
+    ftp-brute) modulo=extras_ftp.py;;
     cred-scan) modulo=extras_credenciales.py;;
     wasm) modulo=extras_wasm.py;;
     *) return 1;;
@@ -1424,6 +1436,8 @@ despachar_extra(){
     exec python3 "$SCRIPT_DIR/$modulo" "${restantes[@]}"
   elif [ "$tipo" = ssh-brute ]; then
     exec python3 "$SCRIPT_DIR/$modulo" ssh-brute "${restantes[@]}"
+  elif [ "$tipo" = ftp-brute ]; then
+    exec python3 "$SCRIPT_DIR/$modulo" ftp-brute "${restantes[@]}"
   elif [ "$tipo" = cred-scan ]; then
     exec python3 "$SCRIPT_DIR/$modulo" cred-scan "${restantes[@]}"
   else

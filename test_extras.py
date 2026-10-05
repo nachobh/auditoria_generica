@@ -19,8 +19,8 @@ AUDITOR = Path(__file__).with_name("auditor_generico.sh")
 MENU = {1: (1, 1), 2: (1, 2), 4: (1, 3), 5: (1, 4), 8: (1, 5),
         9: (1, 6), 22: (1, 7), 3: (2, 1), 19: (2, 2), 14: (2, 3),
         20: (2, 4), 6: (2, 5), 7: (2, 6), 13: (2, 7), 21: (2, 8),
-        10: (3, 1), 17: (3, 2), 11: (3, 3), 15: (4, 1), 16: (4, 2),
-        12: (4, 3), 18: (4, 4), 23: (4, 5)}
+        10: (3, 1), 17: (3, 2), 11: (3, 3), 15: (4, 1), 24: (4, 2),
+        16: (4, 3), 12: (4, 4), 18: (4, 5), 23: (4, 6)}
 
 
 def entrada_menu(opcion, parametros):
@@ -210,6 +210,13 @@ class ExtraTests(unittest.TestCase):
         )
         self.assertEqual(proceso.returncode, 0, proceso.stderr)
         self.assertIn("sshpass", proceso.stdout)
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--modo", "ftp", "--host", "127.0.0.1",
+             "--usuario", "demo", "--dry-run"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("FTP", proceso.stdout)
         # --modo numérico sigue siendo el modo de hashcat
         with tempfile.TemporaryDirectory() as td:
             hash_file = Path(td) / "md5.txt"
@@ -280,7 +287,7 @@ class ExtraTests(unittest.TestCase):
                           proceso.stdout)
 
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
-        for opcion in range(6, 24):
+        for opcion in range(6, 25):
             with self.subTest(opcion=opcion):
                 if opcion in (6, 7):
                     entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
@@ -290,6 +297,8 @@ class ExtraTests(unittest.TestCase):
                     entradas = f"{opcion}\nwlan0mon\n\n\nplan\n"
                 elif opcion == 15:
                     entradas = f"{opcion}\n127.0.0.1\ndemo\n\n3\nplan\n"
+                elif opcion == 24:
+                    entradas = f"{opcion}\n127.0.0.1\nanonymous\n\n3\nplan\n"
                 elif opcion == 16:
                     entradas = f"{opcion}\n{Path(__file__).with_name('ejemplos')}\n\nplan\n"
                 elif opcion == 17:
@@ -315,6 +324,47 @@ class ExtraTests(unittest.TestCase):
                 self.assertEqual(proceso.returncode, 0, proceso.stderr)
                 self.assertIn("4) Otros", proceso.stdout)
                 self.assertIn("Plan:", proceso.stdout)
+
+    def test_ftp_brute_dry_run_y_validaciones(self):
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--tipo", "ftp-brute", "--host", "127.0.0.1:21",
+             "--usuario", "demo", "--dry-run"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("contra demo@127.0.0.1:21", proceso.stdout)
+        for host, error in (("host;mal", "destino inválido"),
+                            ("127.0.0.1", "usuario inválido")):
+            usuario = "demo" if host == "host;mal" else "us;er"
+            proceso = subprocess.run(
+                ["bash", str(AUDITOR), "--tipo", "ftp-brute", "--host", host,
+                 "--usuario", usuario, "--dry-run"],
+                capture_output=True, text=True, timeout=10,
+            )
+            with self.subTest(host=host):
+                self.assertEqual(proceso.returncode, 2)
+                self.assertIn(error, proceso.stderr)
+
+    def test_ftp_brute_puerto_cerrado_sin_acceso(self):
+        from extras_ftp import ftp_brute
+        lista = Path(__file__).with_name("ejemplos") / "candidatos_web_ficticios.txt"
+        resultado = ftp_brute("127.0.0.1:1", "demo", lista, 1)
+        self.assertIn(resultado, {1, 3})
+
+    def test_cred_scan_detecta_tokens_modernos(self):
+        from extras_credenciales import escanear_arbol
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            origen = Path(td) / "tokens.env"
+            origen.write_text(
+                'GH_TOKEN=github_pat_11ABCDEFG1234567890abcdefghijklmnopqrstu\n'
+                'GITLAB_TOKEN=glpat-AbCdEfGhIjKlMnOpQrSt\n'
+                'NPM_TOKEN=npm_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890\n',
+                encoding="utf-8"
+            )
+            hallazgos, _ = escanear_arbol(origen)
+            nombres = {h[2] for h in hallazgos}
+            self.assertIn("token-formato", nombres)
 
     def test_menu_web_resuelve_tilde_y_admite_lista_grande_acotada(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temporal:

@@ -16,7 +16,15 @@ PATRONES = (
     ("token-genérico", re.compile(r"(?i)\b(?:api[_-]?token|auth[_-]?token|access[_-]?token|secret[_-]?key)\b\s*[:=]\s*[\"']?([^\s\"',;]{8,128})")),
     ("password-fichero", re.compile(r"(?i)\b(?:password|passwd|pwd)\b\s*[:=]\s*[\"']?([^\s\"',;]{1,128})")),
     ("url-credenciales", re.compile(r"\b[a-z][a-z0-9+.-]*://([^/\s:@]{1,64}):([^/\s@]{1,128})@")),
-    ("token-formato", re.compile(r"\b(sk-[A-Za-z0-9]{16,64}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})\b")),
+    ("token-formato", re.compile(
+        r"\b(sk-[A-Za-z0-9]{16,64}"
+        r"|ghp_[A-Za-z0-9]{20,}"
+        r"|github_pat_[A-Za-z0-9_]{36,}"
+        r"|glpat-[A-Za-z0-9_-]{20,}"
+        r"|npm_[A-Za-z0-9]{36}"
+        r"|dckr_pat_[A-Za-z0-9_-]{20,}"
+        r"|xox[baprs]-[A-Za-z0-9-]{10,})\b"
+    )),
 )
 
 EXCLUIDOS = {".git", "__pycache__", "node_modules", ".venv", "vendor"}
@@ -64,7 +72,10 @@ def escanear_arbol(ruta, maximo=MAX_CANDIDATOS):
                 for m in patron.finditer(linea):
                     grupos = [g for g in m.groups() if g]
                     valor = grupos[-1] if grupos else m.group(0)
-                    if valor.lower() in {"changeme", "password", "tu_clave", "example", "ejemplo"}:
+                    if valor.lower() in {"changeme", "password", "tu_clave", "example",
+                                         "ejemplo", "your_api_key", "your_token",
+                                         "replace_me", "insert_here", "todo",
+                                         "<password>", "<token>", "<secret>"}:
                         continue
                     hallazgos.append((str(fichero), numero, nombre, enmascarar(valor)))
                     if nombre in {"password-fichero", "url-credenciales"} and valor not in candidatos:
