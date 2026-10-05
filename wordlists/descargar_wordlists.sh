@@ -42,6 +42,17 @@ while [ $# -gt 0 ]; do
 done
 
 [ -f "$MAN" ] || { printf 'falta %s\n' "$MAN" >&2; exit 2; }
+# Rechazar todos los nombres desconocidos antes de descargar o crear temporales.
+for solicitado in "${SOLO[@]}"; do
+  encontrado=0
+  while IFS=$'\t' read -r archivo resto; do
+    [ "$archivo" = "$solicitado" ] && encontrado=1
+  done < "$MAN"
+  if [ "$encontrado" -eq 0 ]; then
+    printf 'nombre fuera del manifiesto: %s\n' "$solicitado" >&2
+    exit 2
+  fi
+done
 if [ "$COMPROBAR" -eq 0 ]; then
   mkdir -p "$DEST"
   TMPD=$(mktemp -d "$DEST/.wl_tmp.XXXXXX") || exit 2
@@ -53,6 +64,10 @@ sha_de(){ sha256sum "$1" | cut -d' ' -f1; }
 procesar(){
   local archivo=$1 lineas=$2 sha=$3 modo=$4 origen=$5
   local dst="$DEST/$archivo" contenido
+  if [ -L "$dst" ] || { [ -e "$dst" ] && [ ! -f "$dst" ]; }; then
+    printf 'ERROR: destino no regular o enlace simbólico: %s\n' "$dst" >&2
+    return 1
+  fi
   if [ "$COMPROBAR" -eq 1 ]; then
     if [ -f "$dst" ] && [ "$(sha_de "$dst")" = "$sha" ]; then
       printf 'ok        %s\n' "$archivo"; return 0
@@ -63,7 +78,7 @@ procesar(){
     printf 'ya está   %s\n' "$archivo"; return 0
   fi
   printf 'bajando   %s ... ' "$archivo"
-  if ! curl -fsSL --retry 3 -o "$TMPD/desc" "$BASE/$origen"; then
+  if ! curl -fsSL --connect-timeout 15 --max-time 900 --retry 3 -o "$TMPD/desc" "$BASE/$origen"; then
     printf 'ERROR: descarga fallida (%s)\n' "$origen" >&2; return 1
   fi
   case "$modo" in
@@ -79,7 +94,10 @@ procesar(){
   if [ "$(sha_de "$contenido")" != "$sha" ]; then
     printf 'ERROR: sha256 distinto del manifiesto\n' >&2; return 1
   fi
-  mv -f "$contenido" "$dst"
+  if ! mv -fT "$contenido" "$dst"; then
+    printf 'ERROR: no se pudo guardar %s\n' "$archivo" >&2
+    return 1
+  fi
   printf 'ok (%s líneas)\n' "$lineas"
 }
 

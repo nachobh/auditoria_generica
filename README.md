@@ -1,7 +1,7 @@
 # kit-auditoria-claves
 
-Licencia MIT · `auditor_generico.sh --version` · registro de cambios en
-[CHANGELOG.md](CHANGELOG.md)
+Licencia Apache-2.0 (ver `LICENSE` y `NOTICE`) · `auditor_generico.sh --version` ·
+registro de cambios en [CHANGELOG.md](CHANGELOG.md)
 
 Base común para auditorías de contraseñas: un único script guiado (`auditor_generico.sh`)
 que va de lo simple a lo complejo, con los wordlists, las reglas de ataque y (opcional)
@@ -26,7 +26,8 @@ Para una auditoría pequeña de varios patrones, consulta
 ```text
 kit-auditoria-claves/
 ├── auditor_generico.sh          script principal (menú guiado o CLI)
-├── LICENSE                      MIT
+├── LICENSE                      Apache-2.0
+├── NOTICE                       atribuciones (Apache 4d) y terceros
 ├── CHANGELOG.md                 registro de cambios (Keep a Changelog)
 ├── demo_controles.py            demo pequeña con datos ficticios
 ├── generar_variantes.py         variantes acotadas de semillas autorizadas
@@ -61,7 +62,7 @@ kit-auditoria-claves/
 └── rainbowcrack/
     ├── build.sh                 compila la fuente a rainbowcrack/bin/
     ├── src/                     RainbowCrack 1.2 parcheado (g++ y openssl actuales)
-    ├── disclaimer.txt           aviso del autor original
+    ├── disclaimer.txt           términos del autor original (Zhu Shuanglei)
     └── readme_src.txt           instrucciones de build originales
 ```
 
@@ -121,7 +122,7 @@ sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
 git clone <la-url-del-repo> kit-auditoria-claves
 cd kit-auditoria-claves
 
-wordlists/descargar_wordlists.sh          # 12 listas, ~260 MB, con sha256
+wordlists/descargar_wordlists.sh          # 17 listas, con sha256
 rainbowcrack/build.sh                     # opcional: tablas del nivel 5
 ```
 
@@ -131,6 +132,9 @@ La descarga de listas y la compilación de RainbowCrack son opcionales.
 `--fuerza` repite la descarga y `wordlists/descargar_wordlists.sh rockyou.txt`
 baja una lista concreta. Las descargas están en `.gitignore`: cada compañero
 las trae con ese comando en su copia.
+Un nombre desconocido aborta toda la selección antes de descargar. El
+descargador rechaza enlaces simbólicos o directorios como archivos de destino
+y devuelve error si no puede guardar una lista verificada.
 
 ## Uso
 
@@ -619,6 +623,11 @@ privadas, tokens y parámetros `password=` en ficheros de texto de hasta 2 MB
 `ssh-brute`, `web-login` o el crackeo offline.
 El escaneo omite enlaces simbólicos y rechaza un enlace como objetivo principal.
 La lista exportada usa un temporal exclusivo y permisos `0600`.
+El recorrido se detiene al alcanzar el máximo de hallazgos sin acumular todas
+las rutas en memoria. Los secretos de hasta cuatro caracteres se ocultan
+completamente; los controles de terminal se muestran escapados.
+En SSH, un corte de conexión o límite de autenticación devuelve código 3
+(inconcluyente), incluso después de haber enviado algún intento.
 
 ### Dos pruebas de archivos
 
@@ -683,6 +692,9 @@ y [OWASP sobre SQLi](https://wstg.owasp.org/latest/4-Web_Application_Security_Te
 chequeo no lo ejecuta: enumera funciones importadas y memoria exportada para
 revisar los permisos que el entorno le concede. El aislamiento y la interacción
 con el host se explican en la [guía de seguridad de WebAssembly](https://webassembly.org/docs/security/).
+El inventario limita el archivo a 8 MiB y las lecturas al contenido de cada
+sección. Rechaza datos de inventario truncados o malformados; no sustituye
+la validación completa de un módulo por un motor WebAssembly.
 
 ## Wordlists
 
@@ -746,8 +758,10 @@ MD5/SHA1 crudo.
 Sin descargar ninguna lista:
 
 ```bash
-bash -n auditor_generico.sh wordlists/descargar_wordlists.sh rainbowcrack/build.sh
-bash -n run_captura_wifi.sh run_captura_wifi_wps.sh
+for script in auditor_generico.sh wordlists/descargar_wordlists.sh rainbowcrack/build.sh \
+  run_captura_wifi.sh run_captura_wifi_wps.sh run_reaver_largo.sh run_mascara_larga.sh; do
+  bash -n "$script" || break
+done
 python3 -m unittest -v test_kit test_wifi_capture test_wps_capture test_extras test_regresiones
 # test_extras_web abre un socket local y se ejecuta donde estén permitidos:
 python3 -m unittest -v test_extras_web

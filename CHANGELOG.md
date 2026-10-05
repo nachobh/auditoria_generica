@@ -3,6 +3,22 @@
 Formato [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 versionado según [SemVer](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Corregido
+- El inventario WASM restringe cada lectura a su sección y rechaza enteros
+  de más de 32 bits, UTF-8 inválido, secciones de inventario repetidas y
+  contenido sobrante. La lectura del archivo también queda limitada a 8 MiB.
+- `cred-scan` recorre los archivos de forma incremental y termina al alcanzar
+  el límite; oculta completamente secretos de hasta cuatro caracteres y
+  escapa controles de terminal en los hallazgos.
+- El descargador rechaza nombres desconocidos antes de procesar una selección,
+  enlaces y destinos no regulares; informa fallos al guardar y acota la espera
+  de las descargas.
+- Los cortes y límites de autenticación SSH devuelven estado inconcluyente
+  (código 3), en lugar de éxito.
+- Pruebas de regresión con módulos, listas y motores ficticios para estos casos.
+
 ## [1.1.0] — 2026-10-05
 
 ### Añadido
@@ -17,7 +33,11 @@ versionado según [SemVer](https://semver.org/lang/es/).
   (`--parar`), reanudación automática por `.restore` y estado (`--estado`).
 - `cred-scan` reconoce tokens `github_pat_`, `glpat-`, `npm_`, `dckr_pat_` y
   descarta marcadores de plantilla (`changeme`, `<token>`, …).
-- `--version` en `auditor_generico.sh`, `LICENSE` MIT y este changelog.
+- `--version` en `auditor_generico.sh` y este changelog.
+- Licencia Apache-2.0 (`LICENSE`) con `NOTICE` de atribuciones: RainbowCrack 1.2
+  incluido en el repo (términos del autor en `rainbowcrack/disclaimer.txt`) y
+  terceros externos documentados (SecLists MIT, john/aircrack-ng/reaver GPL,
+  bettercap GPLv3, hashcat y bkcrack MIT).
 
 ### Cambiado
 - Prioridad del motor GPU: hashcat HIP 7.1.2 en `~/.local/share` antes que el

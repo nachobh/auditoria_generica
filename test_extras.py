@@ -136,7 +136,7 @@ class ExtraTests(unittest.TestCase):
     def test_cred_scan_detecta_enmascara_y_genera(self):
         from extras_credenciales import cred_scan, enmascarar
         self.assertEqual(enmascarar("secreto12"), "se*****12")
-        self.assertEqual(enmascarar("ab"), "a*")
+        self.assertEqual(enmascarar("ab"), "**")
         with tempfile.TemporaryDirectory() as td:
             origen = Path(td) / "f"
             origen.write_text('password = "S3cr3to:Prueba!"\n'

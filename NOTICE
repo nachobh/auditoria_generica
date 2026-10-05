@@ -1,0 +1,25 @@
+kit-auditoria-claves
+Copyright 2026 Ignacio Benito Herrero
+
+This product includes software developed at
+the RainbowCrack Project by Zhu Shuanglei <shuanglei@hotmail.com>
+(rainbowcrack/src/, version 1.2, patched to build with modern g++ and
+OpenSSL). Its terms are in rainbowcrack/disclaimer.txt.
+
+Third-party material referenced or downloaded (not redistributed here):
+
+- SecLists wordlists (https://github.com/danielmiessler/SecLists),
+  MIT License. Downloaded on demand by wordlists/descargar_wordlists.sh
+  and excluded from this repository by .gitignore.
+- hashcat (https://hashcat.net/hashcat/), MIT License. External binary;
+  the kit only invokes it.
+- John the Ripper jumbo (https://www.openwall.com/john/), GPLv2+.
+  External binary; the kit only invokes it.
+- aircrack-ng suite (https://www.aircrack-ng.org/), GPLv2+. External
+  binaries invoked by the WiFi capture scripts.
+- bettercap (https://www.bettercap.org/), GPLv3. External binary invoked
+  by the mitm-arp mode.
+- Reaver / wash (https://github.com/tgrcarlson/reaver), GPLv2. External
+  binary invoked by the WPS modes.
+- bkcrack (https://github.com/kimci86/bkcrack), MIT License. External
+  binary invoked by the zip-conocido mode.

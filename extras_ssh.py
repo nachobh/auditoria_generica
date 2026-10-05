@@ -78,7 +78,7 @@ def ssh_brute(host, usuario, lista, limite, seco=False):
             return 0
         if "too many authentication failures" in salida or "connection closed" in salida:
             print(f"El servidor limita intentos tras {hechos}; prueba detenida por cortesía")
-            return 0 if hechos else 3
+            return 3
         # 255 sin «permission denied» = error de ssh (conexión rechazada, host
         # desconocido, caída...), no contraseña rechazada: no seguir gastando intentos.
         # Código 5 de sshpass sí es rechazo explícito de contraseña.

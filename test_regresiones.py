@@ -10,8 +10,10 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from unittest.mock import patch
 
-from extras_credenciales import cred_scan, escanear_arbol
+from extras_credenciales import cred_scan, enmascarar, escanear_arbol
+from extras_wasm import inventario, uleb
 from test_extras import entrada_menu
 
 BASE = Path(__file__).resolve().parent
@@ -142,6 +144,136 @@ class Regresiones(unittest.TestCase):
             self.assertEqual(len(list((base / 'estado').glob('*.restore'))), 3)
             for log in (base / 'estado').glob('*.log'):
                 self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+
+
+class RobustezInventario(unittest.TestCase):
+    def test_corte_o_limite_ssh_no_se_informa_como_acceso(self):
+        from extras_ssh import ssh_brute
+        with tempfile.TemporaryDirectory() as td:
+            lista = Path(td) / "ficticia.txt"
+            lista.write_text("demo_ficticia_1\ndemo_ficticia_2\n")
+            for detalle in (b"Too many authentication failures", b"Connection closed"):
+                respuesta = subprocess.CompletedProcess([], 255, b"", detalle)
+                with self.subTest(detalle=detalle), \
+                        patch("extras_ssh.shutil.which", return_value="simulado"), \
+                        patch("extras_ssh.subprocess.run", return_value=respuesta) as ejecutar, \
+                        redirect_stdout(io.StringIO()):
+                    self.assertEqual(ssh_brute("127.0.0.1", "demo", lista, 2), 3)
+                    self.assertEqual(ejecutar.call_count, 1)
+
+    def test_wasm_rechaza_secciones_malformadas(self):
+        # El contador no puede tomarse del encabezado de la sección siguiente.
+        secciones = (
+            b"\x02\x00\x00\x00",
+            b"\x07\x00\x00\x00",
+            b"\x02\x02\x00\x00",  # contenido sobrante
+            b"\x07\x03\x01\x00\x00",  # export sin índice
+            b"\x07\x04\x01\x00\x04\x00",  # tipo desconocido
+            b"\x02\x01\x00\x02\x01\x00",  # sección repetida
+            b"\x07\x05\x01\x01\xff\x00\x00",  # UTF-8 inválido
+            b"\x02\x05\x01\x00\x00\x03\x7f",  # global truncado
+        )
+        with tempfile.TemporaryDirectory() as td:
+            archivo = Path(td) / "ficticio.wasm"
+            for seccion in secciones:
+                with self.subTest(seccion=seccion):
+                    archivo.write_bytes(b"\0asm\x01\0\0\0" + seccion)
+                    with self.assertRaises(ValueError):
+                        inventario(archivo)
+
+    def test_leb128_limita_enteros_y_detecta_truncamiento(self):
+        self.assertEqual(uleb(b"\xff\xff\xff\xff\x0f", 0), (2**32 - 1, 5))
+        for dato in (b"\x80", b"\xff\xff\xff\xff\x10",
+                     b"\x80\x80\x80\x80\x80\x00"):
+            with self.subTest(dato=dato), self.assertRaises(ValueError):
+                uleb(dato, 0)
+
+    def test_escaneo_se_detiene_sin_recorrer_todo_el_arbol(self):
+        with tempfile.TemporaryDirectory() as td:
+            fichero = Path(td) / "ficticio.txt"
+            fichero.write_text("password=demo_ficticia\n")
+
+            def rutas():
+                yield fichero
+                self.fail("se recorrió el árbol después de alcanzar el límite")
+
+            with patch("extras_credenciales.iterar_ficheros", return_value=rutas()):
+                hallazgos, _ = escanear_arbol(td, maximo=1)
+            self.assertEqual(len(hallazgos), 1)
+            for limite in (0, -1, 50001):
+                with self.assertRaises(ValueError):
+                    escanear_arbol(td, maximo=limite)
+
+    def test_escaneo_oculta_claves_cortas_y_controles(self):
+        for valor in ("", "a", "ab", "abc", "abcd"):
+            self.assertEqual(enmascarar(valor), "*" * len(valor))
+        with tempfile.TemporaryDirectory() as td:
+            fichero = Path(td) / "demo\x1b[31m.txt"
+            fichero.write_text("password=z\n")
+            salida = io.StringIO()
+            with redirect_stdout(salida):
+                self.assertEqual(cred_scan(fichero), 0)
+            self.assertNotIn("\x1b", salida.getvalue())
+            self.assertIn("password-fichero *", salida.getvalue())
+
+
+class RobustezDescargas(unittest.TestCase):
+    def setUp(self):
+        self.temporal = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporal.cleanup)
+        self.base = Path(self.temporal.name)
+        self.script = self.base / "descargar.sh"
+        shutil.copyfile(BASE / "wordlists/descargar_wordlists.sh", self.script)
+        datos = b"lista_ficticia\n"
+        (self.base / "manifest.tsv").write_text(
+            f"demo.txt\t1\t{hashlib.sha256(datos).hexdigest()}\ttxt\tdemo.txt\n")
+        self.binarios = self.base / "bin"
+        self.binarios.mkdir()
+        curl = self.binarios / "curl"
+        curl.write_text(f"#!{sys.executable}\nimport sys\nfrom pathlib import Path\n"
+                        f"Path(sys.argv[sys.argv.index('-o')+1]).write_bytes({datos!r})\n")
+        curl.chmod(0o700)
+        self.destino = self.base / "salida"
+
+    def ejecutar(self, *args):
+        return subprocess.run(["bash", str(self.script), "--destino", str(self.destino), *args],
+                              env={**os.environ, "PATH": str(self.binarios) + ":" + os.environ["PATH"]},
+                              capture_output=True, text=True, timeout=10)
+
+    def test_nombre_desconocido_aborta_tambien_en_seleccion_mixta(self):
+        p = self.ejecutar("demo.txt", "desconocido.txt")
+        self.assertEqual(p.returncode, 2, p.stderr)
+        self.assertFalse(self.destino.exists())
+
+    def test_descarga_simulada_y_verificacion(self):
+        p = self.ejecutar("demo.txt")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual((self.destino / "demo.txt").read_text(), "lista_ficticia\n")
+        self.assertEqual(self.ejecutar("--comprobar", "demo.txt").returncode, 0)
+        (self.destino / "demo.txt").write_text("alterada\n")
+        self.assertEqual(self.ejecutar("--comprobar", "demo.txt").returncode, 1)
+
+    def test_fallo_al_guardar_no_anuncia_exito_y_limpia_temporales(self):
+        mv = self.binarios / "mv"
+        mv.write_text("#!/bin/sh\nexit 1\n")
+        mv.chmod(0o700)
+        p = self.ejecutar("demo.txt")
+        self.assertEqual(p.returncode, 1, p.stderr)
+        self.assertIn("no se pudo guardar", p.stderr)
+        self.assertNotIn("ok (", p.stdout)
+        self.assertEqual(list(self.destino.iterdir()), [])
+
+    def test_rechaza_destino_directorio_o_enlace(self):
+        self.destino.mkdir()
+        objetivo = self.destino / "demo.txt"
+        objetivo.mkdir()
+        self.assertEqual(self.ejecutar("demo.txt").returncode, 1)
+        objetivo.rmdir()
+        fuera = self.base / "fuera.txt"
+        fuera.write_text("conservar\n")
+        objetivo.symlink_to(fuera)
+        self.assertEqual(self.ejecutar("demo.txt").returncode, 1)
+        self.assertEqual(fuera.read_text(), "conservar\n")
 
 
 if __name__ == "__main__":

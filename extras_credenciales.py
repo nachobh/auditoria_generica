@@ -34,25 +34,34 @@ MAX_CANDIDATOS = 200
 
 def enmascarar(valor):
     if len(valor) <= 4:
-        return valor[0] + "*" * (len(valor) - 1)
+        return "*" * len(valor)
     return valor[:2] + "*" * (len(valor) - 4) + valor[-2:]
 
 
+def iterar_ficheros(raiz):
+    if raiz.is_file():
+        yield raiz
+    elif raiz.is_dir():
+        for carpeta, directorios, archivos in os.walk(raiz, followlinks=False):
+            directorios[:] = sorted(d for d in directorios if d not in EXCLUIDOS
+                                    and not (Path(carpeta) / d).is_symlink())
+            for nombre in sorted(archivos):
+                yield Path(carpeta) / nombre
+    else:
+        raise ValueError("la ruta debe ser un fichero regular o un directorio")
+
+
 def escanear_arbol(ruta, maximo=MAX_CANDIDATOS):
+    if not 1 <= maximo <= 50000:
+        raise ValueError("--maximo debe estar entre 1 y 50000")
     raiz = Path(ruta)
     if raiz.is_symlink():
         raise ValueError("la ruta del escaneo no puede ser un enlace simbólico")
     if not raiz.exists():
         raise ValueError("la ruta no existe")
-    objetivos = [raiz] if raiz.is_file() else []
-    if raiz.is_dir():
-        for carpeta, directorios, archivos in os.walk(raiz, followlinks=False):
-            directorios[:] = sorted(d for d in directorios if d not in EXCLUIDOS
-                                    and not (Path(carpeta) / d).is_symlink())
-            objetivos.extend(Path(carpeta) / nombre for nombre in sorted(archivos))
     hallazgos = []
     candidatos = []
-    for fichero in objetivos:
+    for fichero in iterar_ficheros(raiz):
         try:
             fd = os.open(fichero, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             with os.fdopen(fd, "rb") as entrada:
@@ -95,7 +104,10 @@ def cred_scan(ruta, generar=None, maximo=MAX_CANDIDATOS, seco=False):
         print("Sin hallazgos; el escaneo no demuestra ausencia de credenciales")
         return 1
     for fichero, numero, nombre, valor in hallazgos:
-        print(f"{fichero}:{numero} {nombre} {valor}")
+        # Los nombres y valores pueden contener controles de terminal.
+        fichero_seguro = ascii(fichero)[1:-1] if not fichero.isprintable() else fichero
+        valor_seguro = ascii(valor)[1:-1] if not valor.isprintable() else valor
+        print(f"{fichero_seguro}:{numero} {nombre} {valor_seguro}")
     print(f"Total: {len(hallazgos)} hallazgos (valores enmascarados; el original sólo "
           "queda en la lista generada si la pides)")
     if generar:

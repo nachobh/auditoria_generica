@@ -7,11 +7,13 @@ from pathlib import Path
 
 def uleb(datos, posicion):
     numero = 0
-    for vuelta in range(10):
+    for vuelta in range(5):
         if posicion >= len(datos):
             raise ValueError("WASM truncado")
         byte = datos[posicion]
         posicion += 1
+        if vuelta == 4 and byte & 0xf0:
+            raise ValueError("LEB128 fuera del rango de 32 bits")
         numero |= (byte & 0x7f) << (7 * vuelta)
         if not byte & 0x80:
             return numero, posicion
@@ -22,7 +24,13 @@ def nombre(datos, posicion):
     longitud, posicion = uleb(datos, posicion)
     if longitud > 1024 or posicion + longitud > len(datos):
         raise ValueError("nombre WASM inválido")
-    return datos[posicion:posicion + longitud].decode("utf-8", errors="replace"), posicion + longitud
+    return datos[posicion:posicion + longitud].decode("utf-8"), posicion + longitud
+
+
+def leer_byte(datos, posicion):
+    if posicion >= len(datos):
+        raise ValueError("WASM truncado")
+    return datos[posicion], posicion + 1
 
 
 def limites(datos, posicion):
@@ -37,10 +45,14 @@ def inventario(ruta):
     ruta = Path(ruta)
     if ruta.stat().st_size > 8 * 1024 * 1024:
         raise ValueError("WASM demasiado grande para este inventario (máximo 8 MiB)")
-    datos = ruta.read_bytes()
+    with ruta.open("rb") as entrada:
+        datos = entrada.read(8 * 1024 * 1024 + 1)
+    if len(datos) > 8 * 1024 * 1024:
+        raise ValueError("WASM demasiado grande para este inventario (máximo 8 MiB)")
     if datos[:8] != b"\0asm\x01\0\0\0":
         raise ValueError("no es un módulo WASM binario v1")
     imports, exports = [], []
+    vistas = set()
     posicion = 8
     while posicion < len(datos):
         seccion = datos[posicion]
@@ -49,34 +61,40 @@ def inventario(ruta):
         if fin > len(datos):
             raise ValueError("sección WASM truncada")
         if seccion in {2, 7}:
-            cantidad, actual = uleb(datos, posicion)
+            if seccion in vistas:
+                raise ValueError("sección de inventario WASM duplicada")
+            vistas.add(seccion)
+            # Cada lector sólo puede acceder al contenido de esta sección.
+            contenido = datos[posicion:fin]
+            cantidad, actual = uleb(contenido, 0)
             if cantidad > 10000:
                 raise ValueError("demasiadas entradas WASM")
             for _ in range(cantidad):
                 if seccion == 2:
-                    modulo, actual = nombre(datos, actual)
-                    campo, actual = nombre(datos, actual)
-                    tipo = datos[actual]
-                    actual += 1
+                    modulo, actual = nombre(contenido, actual)
+                    campo, actual = nombre(contenido, actual)
+                    tipo, actual = leer_byte(contenido, actual)
                     if tipo == 0:
-                        _, actual = uleb(datos, actual)
+                        _, actual = uleb(contenido, actual)
                     elif tipo == 1:
-                        actual += 1
-                        actual = limites(datos, actual)
+                        _, actual = leer_byte(contenido, actual)
+                        actual = limites(contenido, actual)
                     elif tipo == 2:
-                        actual = limites(datos, actual)
+                        actual = limites(contenido, actual)
                     elif tipo == 3:
-                        actual += 2
+                        _, actual = leer_byte(contenido, actual)
+                        _, actual = leer_byte(contenido, actual)
                     else:
                         raise ValueError("tipo de import WASM no admitido")
                     imports.append((modulo, campo, tipo))
                 else:
-                    campo, actual = nombre(datos, actual)
-                    tipo = datos[actual]
-                    actual += 1
-                    _, actual = uleb(datos, actual)
+                    campo, actual = nombre(contenido, actual)
+                    tipo, actual = leer_byte(contenido, actual)
+                    if tipo not in {0, 1, 2, 3}:
+                        raise ValueError("tipo de export WASM no admitido")
+                    _, actual = uleb(contenido, actual)
                     exports.append((campo, tipo))
-            if actual > fin:
+            if actual != len(contenido):
                 raise ValueError("sección WASM inválida")
         posicion = fin
     return imports, exports
