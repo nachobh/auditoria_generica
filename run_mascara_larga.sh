@@ -19,7 +19,7 @@ HC="${AUDITOR_HASHCAT:-$HOME/.local/share/hashcat-7.1.2/hashcat}"
 [ -x "$HC" ] || HC=$(command -v hashcat)
 [ -d /opt/rocm/lib ] && export LD_LIBRARY_PATH="/opt/rocm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-uso(){ sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+uso(){ sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 HASH="" DIR="$HOME/ataques_mascara" LONGS="10,11,12" CHARSET='?l?u?d'
 MODO=22000 W="" ACCION="atacar"

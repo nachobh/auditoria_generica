@@ -686,7 +686,7 @@ con el host se explican en la [guía de seguridad de WebAssembly](https://webass
 
 ## Wordlists
 
-No se versiona ninguna lista `.txt`: las doce de abajo se traen con
+No se versiona ninguna lista `.txt`: las diecisiete de abajo se traen con
 `descargar_wordlists.sh` y quedan bajo `wordlists/` (excluidas por `.gitignore`).
 Si tenéis listas propias del equipo, seleccionadlas con `--wl`. El nombre
 `custom.txt` se usa automáticamente en el nivel 1 si existe. No copies ni
@@ -708,6 +708,11 @@ descargas en `manifest.tsv`, desde
 | darkc0de.txt | 1.471.056 | `Passwords/` |
 | Pwdb_top-10000000.txt | 10.000.000 | `Passwords/Common-Credentials/` |
 | rockyou.txt | 14.344.391 | `Passwords/Leaked-Databases/rockyou.txt.tar.gz` |
+| Spanish_Pwdb_top-150.txt | 150 | `Passwords/Common-Credentials/Language-Specific/` |
+| lang-spanish.txt | 441 | `Miscellaneous/` |
+| moby-spanish.txt | 86.058 | `Miscellaneous/Words/Moby-Project/Moby-Language-II/` |
+| RAE_spanish_105582_words.txt | 105.582 | `Miscellaneous/Words/` |
+| Spanish_common-usernames-and-passwords.txt | 525.958 | `Passwords/Common-Credentials/Language-Specific/` |
 
 La presentación no necesita estas listas: suman cientos de MB y algunas
 proceden de filtraciones. `rockyou` llega como `tar.gz` y el script lo extrae a texto plano: si tienes un

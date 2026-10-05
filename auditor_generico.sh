@@ -651,6 +651,8 @@ lista_nivel(){
         wl_o custom.txt ""
         wl_o stupid-ones-in-production.txt ""
         wl_o unkown-azul.txt ""
+        wl_o Spanish_Pwdb_top-150.txt ""
+        wl_o lang-spanish.txt ""
       fi;;
     2)
       if [ ${#WL_CUSTOM[@]} -gt 0 ]; then
@@ -664,7 +666,10 @@ lista_nivel(){
     3)
       wl_o Merriam-Webster-SCRABBLE-4thEdition.txt best66
       wl_o SCRABBLE-large.txt best66
-      wl_o darkc0de.txt best66;;
+      wl_o darkc0de.txt best66
+      wl_o RAE_spanish_105582_words.txt best66
+      wl_o moby-spanish.txt best66
+      wl_o Spanish_common-usernames-and-passwords.txt "";;
     4)
       wl_o Pwdb_top-10000000.txt ""
       wl_o rockyou.txt ""
