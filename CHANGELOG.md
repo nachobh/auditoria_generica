@@ -5,6 +5,16 @@ versionado según [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+- `wifi-wps-scan` ahora usa `wash -j` para leer, cuando el AP lo anuncia, el
+  fabricante y modelo del elemento de información WPS (`wps_manufacturer`,
+  `wps_model_name`, `wps_model_number`); si no está disponible, estima el
+  fabricante por el OUI de la MAC con la base local `ieee-data` (nuevo
+  módulo `oui_lookup.py`, sin consultas externas). Si el fabricante
+  coincide con la lista pública de marcas citadas en el aviso de
+  WPSplinter, añade un aviso puramente informativo (sin comprobar ni
+  explotar el fallo).
+
 ### Corregido
 - El inventario WASM restringe cada lectura a su sección y rechaza enteros
   de más de 32 bits, UTF-8 inválido, secciones de inventario repetidas y

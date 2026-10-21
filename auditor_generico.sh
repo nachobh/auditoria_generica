@@ -145,7 +145,9 @@ Tipos (--tipo):
   wifi-wps-pin  observación WPS + hasta 5 pruebas PIN con Reaver
   wifi-pmkid    adquisición dirigida de PMKID con hcxdumptool
   wifi-deauth   inyección de desautenticación (aireplay-ng) para forzar el handshake
-  wifi-wps-scan escaneo pasivo de objetivos WPS con wash
+  wifi-wps-scan escaneo pasivo de objetivos WPS con wash (bloqueo +
+                fabricante/modelo vía WPS o MAC, aviso si coincide con
+                la lista pública de marcas citadas en WPSplinter)
   mitm-arp      envenenamiento ARP acotado (bettercap) en red propia o autorizada
   ssh-brute     intentos acotados de contraseña SSH con sshpass
   ftp-brute     intentos acotados de contraseña FTP con ftplib

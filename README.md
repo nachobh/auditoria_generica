@@ -408,7 +408,7 @@ BSSID ni contraseñas reales. `--dry-run` valida el plan sin conectarse al objet
 | `wifi-wps-pin` | `wash` pasivo y hasta 50 intentos con Reaver | Detecta bloqueo o registro WPS; pocos intentos inconclusos no prueban seguridad |
 | `wifi-pmkid` | captura dirigida con `hcxdumptool` y filtro PMKID | sólo algunos AP entregan PMKID; el análisis posterior usa formato `22000` |
 | `wifi-deauth` | `aireplay-ng -0` dirigido al BSSID (y cliente opcional) | desconecta a los clientes para forzar el 4-way handshake; interrumpe el servicio unos segundos |
-| `wifi-wps-scan` | `wash -a` pasivo 10–1200 s | lista APs con WPS y si anuncian bloqueo; pasivo, no envía paquetes |
+| `wifi-wps-scan` | `wash -a -j` pasivo 10–1200 s | lista APs con WPS, si anuncian bloqueo y fabricante/modelo (vía WPS o MAC); pasivo, no envía paquetes |
 | `mitm-arp` | envenenamiento ARP con `bettercap` (10–3600 s) | redirige el tráfico del objetivo por esta máquina; interrumpe la LAN y es visible para sus usuarios |
 | `ssh-brute` | hasta 200 intentos de contraseña SSH con `sshpass` | un intento por candidato, `NumberOfPasswordPrompts=1`; se detiene si el servidor limita |
 | `ftp-brute` | hasta 200 intentos de contraseña FTP con `ftplib` | un intento por candidato; para ante 421 o error de conexión |
@@ -449,7 +449,18 @@ mientras con `airodump-ng` o `hcxdumptool`. Si el kernel rechaza los paquetes
 ("send failed"), la interfaz no está realmente en modo monitor con inyección.
 `wifi-wps-scan` es pasivo: marca cada AP como `sin bloqueo anunciado` (WPS sin bloqueo
 anunciado) o `bloqueado`, y sugiere el comando `wifi-wps-pin` para los
-candidatos.
+candidatos. Además añade, cuando está disponible, el fabricante y modelo que
+el propio router difunde en el elemento de información WPS (campos
+`wps_manufacturer`/`wps_model_name`/`wps_model_number` del volcado `-j` de
+`wash`); si el AP no los anuncia, estima el fabricante del chip de red por el
+OUI de la MAC (vía la base local `ieee-data`, sin salir a internet) y lo
+marca como estimado, no como modelo exacto. Si ese fabricante coincide con la
+lista pública de marcas citadas en el aviso de
+["WPSplinter"](https://quentinkaiser.be/security/2026/10/16/one-parser-two-bugs/)
+(un desbordamiento en el reensamblado EAP de WPS del stack Broadcom, sin CVE
+asignado y sin PoC público), el escaneo lo señala como aviso informativo:
+no comprueba ni explota ese fallo, sólo recomienda desactivar WPS si no lo
+usas y preguntar al operador por firmware corregido.
 
 El primer modo exige una interfaz **ya en modo monitor**; observa WPS antes de
 probar el PIN y no ignora un bloqueo anunciado. La prueba es online y puede

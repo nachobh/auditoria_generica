@@ -11,7 +11,8 @@ import shutil
 import subprocess
 import tempfile
 
-from wps_capture_utils import estado_wps, lista_wps
+from oui_lookup import posible_wpsplinter, vendor_de_mac
+from wps_capture_utils import estado_wps, etiqueta_modelo, lista_wps, parse_wash_json
 
 
 MAC = re.compile(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}\Z")
@@ -199,8 +200,30 @@ def pmkid(interfaz, bssid, canal, banda=None, segundos=30, salida=None, seco=Fal
     return 0 if cantidad else 1
 
 
+def _filas_enriquecidas(texto):
+    """Filas normalizadas de una salida de wash, con fabricante/modelo.
+
+    Usa primero el volcado -j (manufacturer/model_name/model_number del
+    elemento WPS, si el AP los anunció); si no hay nada ahí, cae al formato
+    de tabla de -a (sólo versión/bloqueo) y añade el fabricante por OUI de
+    la MAC como estimación aparte.
+    """
+    filas = parse_wash_json(texto)
+    if filas:
+        return filas
+    return [
+        {"bssid": bssid, "canal": canal_ap, "essid": essid, "version": version,
+         "locked": lock, "manufacturer": "", "model_name": "", "model_number": "",
+         "device_name": ""}
+        for bssid, canal_ap, version, lock, essid in lista_wps(texto.splitlines())
+    ]
+
+
 def wps_scan(interfaz, canal=None, segundos=20, seco=False):
-    """Escaneo pasivo de objetivos WPS: lista APs con WPS y si anuncian bloqueo.
+    """Escaneo pasivo de objetivos WPS: lista APs con WPS, si anuncian
+    bloqueo, y el fabricante/modelo que el propio router difunde en el
+    elemento de información WPS (o, en su defecto, el fabricante del chip
+    de red estimado por el OUI de la MAC).
 
     Método principal: captura con airodump-ng y analiza el pcap con wash -f.
     En chips como el mt7925, wash en vivo no ve los beacons; el análisis
@@ -234,12 +257,12 @@ def wps_scan(interfaz, canal=None, segundos=20, seco=False):
                            check=False)
             cap = Path(str(base) + "-01.cap")
             if cap.is_file() and cap.stat().st_size > 24:
-                offline = subprocess.run([wash, "-f", str(cap), "-a"],
+                offline = subprocess.run([wash, "-f", str(cap), "-a", "-j"],
                                          capture_output=True, timeout=120,
                                          check=False, cwd=temporal)
-                filas = lista_wps(offline.stdout.decode(errors="replace").splitlines())
+                filas = _filas_enriquecidas(offline.stdout.decode(errors="replace"))
         else:
-            orden = [wash, "-u", "-a", "-i", interfaz]
+            orden = [wash, "-u", "-a", "-j", "-i", interfaz]
             if canal:
                 orden += ["-c", str(canal)]
             try:
@@ -249,23 +272,40 @@ def wps_scan(interfaz, canal=None, segundos=20, seco=False):
                 texto = exploracion.stdout.decode(errors="replace")
             except subprocess.TimeoutExpired as exc:
                 texto = (exc.stdout or b"").decode(errors="replace")
-            filas = lista_wps(texto.splitlines())
+            filas = _filas_enriquecidas(texto)
     if not filas:
         print("Sin APs con WPS observados; el escaneo no demuestra ausencia de WPS")
         return 1
     candidatos = 0
-    for bssid, canal_ap, version, lock, essid in filas:
-        bloqueado = lock.lower() in {"yes", "si", "sí", "1"}
+    avisos_wpsplinter = []
+    for fila in filas:
+        bssid, canal_ap = fila["bssid"], fila["canal"]
+        bloqueado = fila["locked"].lower() in {"yes", "si", "sí", "1"}
         # «sin bloqueo anunciado» no demuestra vulnerabilidad: sólo indica que
         # el beacon no reporta lock; puede no admitir PIN o tener protección real.
         marca = "sin bloqueo anunciado" if not bloqueado else "bloqueado"
         if not bloqueado:
             candidatos += 1
-        print(f"{bssid} canal {canal_ap} WPS {version} {marca} {essid}".rstrip())
+        vendor_oui = vendor_de_mac(bssid)
+        modelo = etiqueta_modelo(fila, vendor_oui)
+        extra = f" · {modelo}" if modelo else ""
+        print(f"{bssid} canal {canal_ap} WPS {fila['version']} {marca} "
+              f"{fila['essid']}{extra}".rstrip())
+        vendor_anunciado = fila.get("manufacturer") or vendor_oui or ""
+        if posible_wpsplinter(vendor_anunciado):
+            avisos_wpsplinter.append(bssid)
     if candidatos:
         print(f"{candidatos} objetivo(s) WPS sin bloqueo anunciado; prueba acotada: "
               f"auditor_generico.sh --tipo wifi-wps-pin --interfaz {interfaz} "
               f"--bssid <BSSID> --canal <canal>")
+    if avisos_wpsplinter:
+        print(f"\nAviso informativo: {len(avisos_wpsplinter)} AP(s) con fabricante que "
+              "figura en el listado público de WPSplinter (desbordamiento en el "
+              "reensamblado EAP de WPS del stack Broadcom; sin CVE, sin PoC público, "
+              "sin confirmar si este equipo en concreto está afectado): "
+              + ", ".join(avisos_wpsplinter))
+        print("Esta herramienta no comprueba ni explota ese fallo: desactiva WPS si no lo "
+              "usas y consulta a tu operadora si hay firmware que lo corrija.")
     return 0
 
 
