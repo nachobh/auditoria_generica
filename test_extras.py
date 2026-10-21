@@ -22,7 +22,9 @@ MENU = {1: (1, 1), 2: (1, 2), 4: (1, 3), 5: (1, 4), 8: (1, 5), 9: (1, 6),
         25: (2, 1, 1), 26: (2, 1, 2), 27: (2, 1, 3),
         3: (2, 3, 1), 19: (2, 3, 2), 7: (2, 3, 3), 13: (2, 3, 4),
         14: (2, 4, 1), 20: (2, 4, 2), 6: (2, 4, 3), 21: (2, 4, 4),
-        28: (2, 4, 5),
+        28: (2, 4, 5), 29: (2, 4, 6), 30: (2, 4, 7),
+        31: (2, 5, 1), 32: (2, 5, 2), 33: (2, 5, 3), 34: (2, 5, 4),
+        35: (2, 5, 5), 36: (2, 5, 6), 37: (2, 5, 7), 38: (2, 5, 8),
         10: (3, 1), 17: (3, 2), 11: (3, 3), 15: (4, 1), 24: (4, 2),
         16: (4, 3), 12: (4, 4), 18: (4, 5), 23: (4, 6)}
 
@@ -306,7 +308,7 @@ class ExtraTests(unittest.TestCase):
                           proceso.stdout)
 
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
-        for opcion in list(range(6, 25)) + [28]:
+        for opcion in list(range(6, 25)) + [28, 29, 30] + list(range(31, 39)):
             with self.subTest(opcion=opcion):
                 if opcion in (6, 7):
                     entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
@@ -337,11 +339,31 @@ class ExtraTests(unittest.TestCase):
                     entradas = f"{opcion}\ndemo\nplan\n"
                 elif opcion == 28:
                     entradas = f"{opcion}\nwlan0mon\nRed Ficticia\nplan\n"
+                elif opcion == 29:
+                    entradas = f"{opcion}\nwlan0mon\nRed Ficticia\n\n\n\nplan\n"
+                elif opcion == 30:
+                    entradas = f"{opcion}\n{BASE / 'firmware_ficticio.bin'}\n\nn\nplan\n"
+                elif opcion in (31, 32, 36):
+                    entradas = (f"{opcion}\nwlan0mon\n02:11:22:33:44:55\n6\n"
+                                f"\nplan\n")
+                elif opcion == 33:
+                    entradas = f"{opcion}\n\nRed Ficticia\n6\n\nplan\n"
+                elif opcion == 34:
+                    entradas = f"{opcion}\nwlan0mon\n\nplan\n"
+                elif opcion == 35:
+                    entradas = f"{opcion}\nplan\n"
+                elif opcion == 37:
+                    entradas = f"{opcion}\n\nplan\n"
+                elif opcion == 38:
+                    entradas = f"{opcion}\nplan\n"
                 else:
                     entradas = f"{opcion}\n" + "\n" * 6
                 entradas = entrada_menu(opcion, entradas.split("\n", 1)[1])
-                proceso = subprocess.run(["bash", str(AUDITOR)], input=entradas,
-                                         capture_output=True, text=True, timeout=10)
+                with tempfile.TemporaryDirectory() as estado:
+                    entorno = dict(os.environ, XDG_STATE_HOME=estado)
+                    proceso = subprocess.run(["bash", str(AUDITOR)], input=entradas,
+                                             capture_output=True, text=True,
+                                             timeout=10, env=entorno)
                 self.assertEqual(proceso.returncode, 0, proceso.stderr)
                 self.assertIn("4) Otros", proceso.stdout)
                 self.assertIn("Plan:", proceso.stdout)

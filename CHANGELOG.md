@@ -5,6 +5,22 @@ versionado según [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-10-21
+
+### Añadido
+- Bloque «Otros ataques» en el menú WiFi (OP 31-38) con ocho familias nuevas:
+  `wifi-wep` (IVs + aircrack -a 1), `wifi-wpa3` (captura SAE/EAPOL con
+  hcxdumptool → 22000), `wifi-evil-twin` (clon abierto hostapd+dnsmasq con
+  conteo de asociaciones), `wifi-enterprise` (detección AUTH=MGT + guía
+  eaphammer), `wifi-krack` (versiones wpa_supplicant/hostapd vs KRACK),
+  `wps-pins` (diccionario de PINes por defecto de fabricante con Reaver),
+  `ble-recon` (bluetoothctl) y `sdr-check` (RTL2832U + rtl_test).
+- `wordlists/wps_pins_fabricante.txt` (17 PINes de fábrica publicados).
+- `extras_rf.py` para las familias no-WiFi; alias CLI `wep`, `wpa3`,
+  `evil-twin`, `enterprise`, `krack`, `pins`, `ble`, `sdr`.
+- Pruebas reales: BLE vio 5 dispositivos; enterprise sin MGT (SOHO);
+  krack/hostapd 2.10 parcheados; sdr sin dongle.
+
 ## [1.3.0] — 2026-10-21
 
 ### Añadido

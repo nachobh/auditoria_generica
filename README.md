@@ -107,7 +107,12 @@ sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
   el script avisa y usa john (más lento).
 - **Captura WiFi:** `aircrack-ng`, `iw`, `hcxtools` y un adaptador compatible con
   modo monitor; la captura requiere `sudo`. `--dry-run` sólo necesita Bash.
-- **WPSplinter:** el modo `wifi-wpsplinter` necesita la librería Python `scapy`
+- **Otros ataques:** `wifi-evil-twin` necesita `hostapd` y `dnsmasq`
+  (`sudo apt-get install -y hostapd dnsmasq`) y usa la interfaz en modo
+  gestionado (corta el WiFi durante la prueba); `ble-recon` necesita `bluez`
+  y un adaptador sin rfkill; `sdr-check` recomienda `rtl-sdr` sólo si detecta
+  dongle; `wifi-enterprise` documenta la instalación de eaphammer sin
+  automatizarla.
   instalada **para root**: `sudo python3 -m pip install --break-system-packages
   scapy` (el `--user` del usuario normal no lo ve root). La provocación
   (`wpsplinter-probar`) usa la misma dependencia. El triage de firmware
@@ -163,7 +168,21 @@ interfaces, activar/desactivar modo monitor), **Escaneo de objetivos**,
 **Ataque WPA** (analizar captura, captura dirigida, PMKID, desautenticación) y
 **Ataque WPS** (escaneo pasivo, evidencia, PIN acotado —admite Pixie Dust—,
 PIN prolongado, huella WPSplinter, provocación acotada y triage YARA de
-firmware). Tras cada operación se vuelve al submenú anterior, no al
+firmware) y **Otros ataques** (WEP, WPA3-SAE, evil twin con conteo de
+asociaciones, detección 802.1X, comprobación KRACK/FragAttacks del cliente,
+PINes por defecto de fabricante, descubrimiento BLE y comprobación SDR).
+
+El bloque **Otros ataques** cubre las familias del espectro inalámbrico que
+un pentester encuentra además del WPA2/WPS doméstico. Cada una es acotada y
+honesta sobre su alcance: `wifi-enterprise` y `wifi-krack` **detectan y
+guían** (el ataque activo real —eaphammer, client-attack— ataca a clientes o
+empieza por montar un AP propio y queda fuera del ámbito del kit);
+`wifi-evil-twin` sí ejecuta: levanta un clon abierto del SSID con
+hostapd+dnsmasq durante N segundos y cuenta cuántos dispositivos se asocian
+sin que nadie los invite (la métrica que predice el éxito de un evil twin
+KARMA). `ble-recon` y `sdr-check` cubren Bluetooth y radio definida por
+software: el primero descubre dispositivos visibles; el segundo comprueba si
+el hardware RTL-SDR existe antes de prometer nada. Tras cada operación se vuelve al submenú anterior, no al
 menú principal.
 
 **Objetivo en memoria.** `Escaneo de objetivos → Escanear y elegir` barre el
@@ -450,6 +469,14 @@ BSSID ni contraseñas reales. `--dry-run` valida el plan sin conectarse al objet
 | `wifi-wpsplinter` | fingerprinter EAP de `third_party/broadcom-wps` (scapy) | clasifica el reensamblador WPS del AP (LIKELY_VULNERABLE/NOT/INCONCLUSIVE) sin explotarlo; requiere root, monitor y scapy |
 | `wpsplinter-probar` | fragmentos de continuación que desbordan el reensamblador (1-5 golpes) | provocación genérica con riesgo real de DoS; clasifica HEALTHY/WPS_SILENT/SIN_BALIZAS tras cada golpe |
 | `firmware-yara` | reglas Kaiser sobre el firmware del router (extrae zip/7z/squashfs) | triage estático por modelo/proveedor; la regla VULN_ apunta a la ruta vulnerable; no prueba ausencia |
+| `wifi-wep` | captura de IVs (airodump) + crack (aircrack-ng -a 1) | red legada WEP; informe completo en el directorio de capturas |
+| `wifi-wpa3` | hcxdumptool captura SAE/EAPOL + hcxpcapngtool | produce `.22000` listo para el flujo `--tipo wifi`; informa si vio SAE |
+| `wifi-evil-twin` | clon abierto con hostapd+dnsmasq en la interfaz gestionada | cuenta qué dispositivos se asocian solos (exposición KARMA/evil twin); corta el WiFi de la máquina durante la prueba |
+| `wifi-enterprise` | barrido airodump filtrando AUTH=MGT | detecta APs 802.1X y guía el ataque eaphammer (hashcat -m 5500); no lo automatiza |
+| `wifi-krack` | versiones locales de wpa_supplicant/hostapd vs 2.7 | comprobación pasiva lado cliente de KRACK/FragAttacks; la prueba activa ataca clientes y es fuera de ámbito |
+| `wps-pins` | diccionario `wordlists/wps_pins_fabricante.txt` con Reaver | PINes por defecto de fabricante, acotado por `--limite-intentos` |
+| `ble-recon` | bluetoothctl scan acotado | descubrimiento BLE/BR-EDR (wearables, cerraduras, sensores) |
+| `sdr-check` | lsusb RTL2832U + rtl_test | comprueba hardware/herramientas SDR; sin dongle la familia no aplica |
 | `mitm-arp` | envenenamiento ARP con `bettercap` (10–3600 s) | redirige el tráfico del objetivo por esta máquina; interrumpe la LAN y es visible para sus usuarios |
 | `ssh-brute` | hasta 200 intentos de contraseña SSH con `sshpass` | un intento por candidato, `NumberOfPasswordPrompts=1`; se detiene si el servidor limita |
 | `ftp-brute` | hasta 200 intentos de contraseña FTP con `ftplib` | un intento por candidato; para ante 421 o error de conexión |

