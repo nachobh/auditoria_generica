@@ -73,7 +73,8 @@ kit-auditoria-claves/
 sudo apt-get update
 sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
   python3-olefile libcompress-raw-lzma-perl poppler-utils \
-  hcxtools aircrack-ng iw reaver sshpass build-essential libssl-dev
+  hcxtools aircrack-ng iw reaver sshpass build-essential libssl-dev \
+  yara squashfs-tools
 ```
 
 - **Motor de crackeo:** `hashcat` (GPU) y/o `john`. El script prefiere hashcat y cae a
@@ -108,7 +109,10 @@ sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
   modo monitor; la captura requiere `sudo`. `--dry-run` sólo necesita Bash.
 - **WPSplinter:** el modo `wifi-wpsplinter` necesita la librería Python `scapy`
   instalada **para root**: `sudo python3 -m pip install --break-system-packages
-  scapy` (el `--user` del usuario normal no lo ve root).
+  scapy` (el `--user` del usuario normal no lo ve root). La provocación
+  (`wpsplinter-probar`) usa la misma dependencia. El triage de firmware
+  (`firmware-yara`) necesita `yara` (`sudo apt-get install -y yara`) y, para
+  imágenes squashfs, `squashfs-tools`.
 - **Observación WPS:** `reaver` aporta `wash`, que lee los anuncios WPS sin probar
   PIN. El script WPS requiere además `aircrack-ng`, `iw` y modo monitor. Si `wash`
   está instalado en `~/.local/bin/wash`, el script lo encuentra también al usar
@@ -157,8 +161,9 @@ credenciales, WASM, MITM y utilidades (demo, variantes y tests).
 Dentro de **Auditoría WiFi** hay cuatro bloques: **Tarjeta de red** (listar
 interfaces, activar/desactivar modo monitor), **Escaneo de objetivos**,
 **Ataque WPA** (analizar captura, captura dirigida, PMKID, desautenticación) y
-**Ataque WPS** (escaneo pasivo, evidencia, PIN acotado, PIN prolongado y
-huella WPSplinter). Tras cada operación se vuelve al submenú anterior, no al
+**Ataque WPS** (escaneo pasivo, evidencia, PIN acotado —admite Pixie Dust—,
+PIN prolongado, huella WPSplinter, provocación acotada y triage YARA de
+firmware). Tras cada operación se vuelve al submenú anterior, no al
 menú principal.
 
 **Objetivo en memoria.** `Escaneo de objetivos → Escanear y elegir` barre el
@@ -192,8 +197,8 @@ Por línea de comandos:
 `wifi`, `hash`, `externo` (formato no reconocido) y `auto` (por defecto).
 
 **Modos cortos (`--modo`):** alias de `--tipo` para los modos de ataque:
-`wps`, `wps-scan`, `pmkid`, `deauth`, `wpsplinter`, `escanear`, `ssh`, `cred`,
-además de los nombres largos completos. `--modo` con número sigue siendo el modo de hashcat
+`wps`, `wps-scan`, `pmkid`, `deauth`, `wpsplinter`, `probe`, `firmware`,
+`escanear`, `ssh`, `cred`, además de los nombres largos completos. `--modo` con número sigue siendo el modo de hashcat
 (`--modo 0` = MD5). `--tiempo N` es un atajo según el modo: segundos para
 `pmkid` y `wps-scan`, segundos de bkcrack para `zip-conocido` y minutos
 (equivalente a `--max-min`) para objetivos offline.
@@ -349,6 +354,11 @@ algunos routers hizo viable el abuso. Un AP que anuncia WPS no demuestra por sí
 solo que su método PIN esté habilitado ni que permita intentos sin límite.
 
 `run_captura_wifi_wps.sh` observa pasivamente, mediante
+**Pixie Dust (`--pixie`)**: en lugar de probar PINs, Reaver captura los nonces
+del enrollee y los crackea offline — es instantáneo si el AP es vulnerable a
+Pixie y no gasta cuota de intentos. Se activa con `--pixie` en `wifi-wps-pin`
+o desde el menú WPS (opción 3, pregunta `s/N`).
+
 [`wash`](https://github.com/t6x/reaver-wps-fork-t6x/blob/master/docs/README.WASH), **un BSSID y canal
 concretos**. Si se observa WPS, guarda una captura corta de ese AP con
 `airodump-ng`; el resultado incluye la versión y el estado de bloqueo anunciados
@@ -438,6 +448,8 @@ BSSID ni contraseñas reales. `--dry-run` valida el plan sin conectarse al objet
 | `wifi-monitor` | `airmon-ng` (o `ip`/`iw` si no está) sobre una interfaz propia | activa/desactiva modo monitor; `--listar` muestra interfaces y cuál es la de la ruta por defecto; niega activar sobre ésta salvo `--forzar`; al desactivar resucita NetworkManager y reconecta |
 | `wifi-escanear` | `airodump-ng` 5–1200 s y lista numerada por señal | deja el modo monitor activo y el objetivo (ESSID/BSSID/canal) en memoria; el menú lo reutiliza en todos los prompts |
 | `wifi-wpsplinter` | fingerprinter EAP de `third_party/broadcom-wps` (scapy) | clasifica el reensamblador WPS del AP (LIKELY_VULNERABLE/NOT/INCONCLUSIVE) sin explotarlo; requiere root, monitor y scapy |
+| `wpsplinter-probar` | fragmentos de continuación que desbordan el reensamblador (1-5 golpes) | provocación genérica con riesgo real de DoS; clasifica HEALTHY/WPS_SILENT/SIN_BALIZAS tras cada golpe |
+| `firmware-yara` | reglas Kaiser sobre el firmware del router (extrae zip/7z/squashfs) | triage estático por modelo/proveedor; la regla VULN_ apunta a la ruta vulnerable; no prueba ausencia |
 | `mitm-arp` | envenenamiento ARP con `bettercap` (10–3600 s) | redirige el tráfico del objetivo por esta máquina; interrumpe la LAN y es visible para sus usuarios |
 | `ssh-brute` | hasta 200 intentos de contraseña SSH con `sshpass` | un intento por candidato, `NumberOfPasswordPrompts=1`; se detiene si el servidor limita |
 | `ftp-brute` | hasta 200 intentos de contraseña FTP con `ftplib` | un intento por candidato; para ante 421 o error de conexión |
@@ -657,6 +669,56 @@ root) y la interfaz en modo monitor. Las evidencias (pcap completo +
 (comportamiento hostapd) o `INCONCLUSIVE`. El escaneo pasivo `wifi-wps-scan`
 ya avisaba por OUI cuando el fabricante figuraba en la lista pública; esta
 prueba es la comprobación activa.
+
+#### Provocación acotada (`wpsplinter-probar`, alias `--modo probe`)
+
+El fingerprinter se detiene en el primer fragmento: por eso es inofensivo. El
+paso siguiente, genérico para cualquier AP `LIKELY_VULNERABLE` de la familia,
+es **continuar** los fragmentos EAP: el reensamblador vulnerable copia más
+allá de su búfer (la primitiva "arbitrary write by controlling
+`total_received`" de las diapositivas de Hexacon 2026 del propio Kaiser). Sin
+calibrar por firmware, el resultado esperable es **DoS del WPS Monitor o
+reinicio del AP**, no RCE: la ejecución arbitraria necesita offsets por
+modelo (en ARM Linux, `system@PLT` fijo → `send_data` → `system($a0)`; en
+eCos, leak previo + hijack de `send_data`).
+
+```bash
+# plan sin permisos
+./auditor_generico.sh --modo probe --interfaz wlan0mon --ssid MiRed --dry-run
+# 2 golpes × 12 fragmentos, salud del AP comprobada tras 25 s (RIESGO DoS)
+sudo ./auditor_generico.sh --modo probe --interfaz wlan0mon --ssid MiRed
+```
+
+Cada golpe termina solo y clasifica al AP: `HEALTHY` (sobrevive),
+`WPS_SILENT` (balizas OK pero dejó de anunciar WPS: el monitor WPS cayó) o
+`SIN_BALIZAS` (reinicio/caída; espera 1-2 min). Evidencias pcap+JSON junto al
+fingerprinter. Asume el riesgo: en red propia está justificado; en ajena, no.
+
+Prueba real (oct-2026, MiFibra-casa): los 12 fragmentos de continuación del
+primer golpe fueron **aceptados** por el reensamblador y el AP quedó
+`HEALTHY`; en el segundo golpe la entrada WPS agotó el tiempo de espera
+(el monitor WPS aún se recuperaba del golpe 1) y volvió a anunciar WPS poco
+después. Conclusión honesta: la secuencia genérica llega al parser vulnerable
+pero tumbarlo o ejecutar código exige la calibración por firmware que Kaiser
+no ha publicado; el pcap del probe queda como evidencia para afinar offsets.
+
+#### Triage YARA de firmware (`firmware-yara`, alias `--modo firmware`)
+
+Genérico por modelo y proveedor: descarga el firmware del sitio de soporte de
+tu operadora (Orange, Movistar, Vodafone, Proximus…) y aplica las reglas
+`third_party/broadcom-wps/broadcom_wps_monitor.yar` (Kaiser, MIT) buscando el
+WPS Monitor de Broadcom en ELF32 ARM/MIPS; `VULN_BRCM_WPS_EAP_Fragment_Reassembly_ELF`
+apunta a la ruta de reensamblado vulnerable.
+
+```bash
+./auditor_generico.sh --modo firmware ./firmware_router.bin --extraer --dry-run
+./auditor_generico.sh --modo firmware ./firmware.zip --url https://… --extraer
+```
+
+Desenvuelve zip/7z/tar/gz/squashfs (necesita `yara` y, para squashfs,
+`squashfs-tools`) y escanea también en crudo si no hay contenedores. Son
+reglas de triage: un firmware parcheado puede conservar las cuerdas; la
+confirmación en aire es `wifi-wpsplinter`.
 
 Resultado en redes propias (oct-2026): **MiFibra-casa (Arcadyan, canal 1) →
 `LIKELY_VULNERABLE`**, con `implementation: BROADCOM_WPS_MONITOR` y evidencia

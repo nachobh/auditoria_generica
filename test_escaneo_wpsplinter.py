@@ -62,7 +62,8 @@ class WpsplinterTests(unittest.TestCase):
 
     def test_cli_alias_y_dry_run(self):
         auditor = Path(__file__).with_name("auditor_generico.sh")
-        casos = {"wpsplinter": ["--ssid", "Red Ficticia"], "escanear": ["--segundos", "30"]}
+        casos = {"wpsplinter": ["--ssid", "Red Ficticia"], "escanear": ["--segundos", "30"],
+                 "probe": ["--ssid", "Red Ficticia"]}
         for modo, extra in casos.items():
             proceso = subprocess.run(
                 ["bash", str(auditor), "--modo", modo, "--interfaz", "wlan0mon",
@@ -70,6 +71,25 @@ class WpsplinterTests(unittest.TestCase):
                 capture_output=True, text=True, timeout=15)
             self.assertEqual(proceso.returncode, 0, proceso.stderr)
             self.assertIn("Plan:", proceso.stdout)
+
+    def test_firmware_yara_alias_y_dry_run(self):
+        auditor = Path(__file__).with_name("auditor_generico.sh")
+        proceso = subprocess.run(
+            ["bash", str(auditor), "--modo", "firmware", "./firmware_ficticio.bin",
+             "--extraer", "--dry-run"],
+            capture_output=True, text=True, timeout=15)
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("yara -w -r", proceso.stdout)
+        self.assertIn("tras extraer", proceso.stdout)
+
+    def test_pixie_dry_run(self):
+        auditor = Path(__file__).with_name("auditor_generico.sh")
+        proceso = subprocess.run(
+            ["bash", str(auditor), "--modo", "wps", "--interfaz", "wlan0mon",
+             "--bssid", "02:11:22:33:44:55", "--canal", "6", "--pixie", "--dry-run"],
+            capture_output=True, text=True, timeout=15)
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("Pixie Dust", proceso.stdout)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,23 @@ versionado según [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-10-21
+
+### Añadido
+- `wpsplinter-probar` (alias `--modo probe`): provocación acotada del
+  desbordamiento WPSplinter con fragmentos de continuación (1-5 golpes ×
+  2-48 fragmentos) y clasificación de salud del AP tras cada golpe
+  (HEALTHY/WPS_SILENT/SIN_BALIZAS). Riesgo real de DoS asumido por el
+  operador; evidencias pcap+JSON.
+- `firmware-yara` (alias `--modo firmware`): triage YARA de firmwares de
+  router genérico por modelo y proveedor — extrae zip/7z/tar/gz/squashfs y
+  aplica las reglas Broadcom WPS Monitor (tercera regla VULN_ del toolkit de
+  Kaiser, vendorizada en third_party/broadcom-wps).
+- Pixie Dust en `wifi-wps-pin` (`--pixie`): captura de nonces y crack
+  offline del PIN con Reaver sin fuerza bruta; pregunta en el menú.
+- Navegación y tabla de modos actualizadas; tests `test_escaneo_wpsplinter`
+  ampliados (9).
+
 ## [1.2.0] — 2026-10-21
 
 ### Añadido

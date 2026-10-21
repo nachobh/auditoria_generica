@@ -2,7 +2,7 @@
 set -uo pipefail
 export LC_ALL=C
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
@@ -110,7 +110,9 @@ alias_modo(){
     deauth) printf 'wifi-deauth';;
     mitm) printf 'mitm-arp';;
     wpsplinter) printf 'wifi-wpsplinter';;
+    probe) printf 'wpsplinter-probar';;
     escanear) printf 'wifi-escanear';;
+    firmware) printf 'firmware-yara';;
     ssh) printf 'ssh-brute';;
     ftp) printf 'ftp-brute';;
     cred) printf 'cred-scan';;
@@ -121,7 +123,7 @@ alias_modo(){
 
 es_modo_extra(){
   case "$(alias_modo "$1")" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
     captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test) return 0;;
     *) return 1;;
   esac
@@ -152,15 +154,21 @@ Tipos (--tipo):
                 fabricante/modelo vía WPS o MAC, aviso si coincide con
                 la lista pública de marcas citadas en WPSplinter)
   wifi-monitor  activa/desactiva modo monitor en una interfaz WiFi propia
+                (equivalente a airmon-ng start/stop; --listar para ver
+                interfaces, --accion activar|desactivar, --forzar para
+                tocar la interfaz de tu ruta por defecto)
   wifi-escanear escaneo del entorno y lista numerada de objetivos; deja el
                 modo monitor activo (sólo wifi-monitor --accion desactivar
                 lo quita)
   wifi-wpsplinter huella activa de WPSplinter (desbordamiento WPS en monitores
                 Broadcom, Quentin Kaiser oct-2026): envía EAP fragmentados y
                 clasifica el reensamblador del AP sin explotarlo
-                (equivalente a airmon-ng start/stop; --listar para ver
-                interfaces, --accion activar|desactivar, --forzar para
-                tocar la interfaz de tu ruta por defecto)
+  wpsplinter-probar provocación acotada WPSplinter: fragmentos de continuación
+                que desbordan el reensamblador y comprobación de salud del AP
+                tras cada golpe. RIESGO REAL DE DoS (1-5 golpes)
+  firmware-yara  triage YARA de firmwares de router (cualquier modelo y
+                proveedor): extrae contenedores y aplica las reglas Broadcom
+                WPS Monitor del toolkit de Quentin Kaiser
   mitm-arp      envenenamiento ARP acotado (bettercap) en red propia o autorizada
   ssh-brute     intentos acotados de contraseña SSH con sshpass
   ftp-brute     intentos acotados de contraseña FTP con ftplib
@@ -1297,7 +1305,7 @@ menu_wps(){
   local opcion
   while true; do
     printf '\n=== WiFi · Ataque WPS ===\n'
-    printf '  1) Escaneo pasivo WPS (wash)\n  2) Evidencia pasiva WPS (pcap)\n  3) WPS PIN: prueba acotada (Reaver)\n  4) WPS PIN: prueba prolongada (Reaver)\n  5) WPSplinter: huella Broadcom (fingerprinter)\n  0) Volver\n'
+    printf '  1) Escaneo pasivo WPS (wash)\n  2) Evidencia pasiva WPS (pcap)\n  3) WPS PIN: prueba acotada (Reaver; admite Pixie Dust)\n  4) WPS PIN: prueba prolongada (Reaver)\n  5) WPSplinter: huella Broadcom (fingerprinter)\n  6) WPSplinter: provocación acotada (RIESGO DoS)\n  7) WPSplinter: YARA sobre firmware del router\n  0) Volver\n'
     mostrar_objetivo
     opcion=$(preguntar 'Opción' 0)
     case "$opcion" in
@@ -1307,6 +1315,8 @@ menu_wps(){
       3) ejecutar_ronda 6;;
       4) ejecutar_ronda 21;;
       5) ejecutar_ronda 28;;
+      6) ejecutar_ronda 29;;
+      7) ejecutar_ronda 30;;
       *) err "opción desconocida: $opcion";;
     esac
   done
@@ -1392,7 +1402,7 @@ guia(){
   # Requiere que el llamador ya haya fijado OP_GUIA (vía seleccionar_objetivo).
   local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28)
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30)
       guia_extra "$op"
       return 0;;
   esac
@@ -1435,7 +1445,11 @@ guia_extra(){
       parametros+=(--bssid "$(preguntar_bssid)")
       parametros+=(--canal "$(preguntar_canal)")
       if [ "$opcion" = 6 ]; then
-        parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos PIN (1-50)' 3)")
+        if confirmar '¿Pixie Dust (captura de nonces y crack offline, sin fuerza bruta)?'; then
+          parametros+=(--pixie)
+        else
+          parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos PIN (1-50)' 3)")
+        fi
       else
         parametros+=(--segundos "$(preguntar 'Duración en segundos (5-600)' 30)")
       fi;;
@@ -1542,6 +1556,23 @@ guia_extra(){
       tipo=wifi-wpsplinter
       parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor')")
       parametros+=(--ssid "$(preguntar_ssid)");;
+    29)
+      tipo=wpsplinter-probar
+      aviso 'RIESGO: cada golpe puede tumbar el WPS Monitor o reiniciar el AP'
+      parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor')")
+      parametros+=(--ssid "$(preguntar_ssid)")
+      parametros+=(--golpes "$(preguntar 'Golpes (1-5)' 2)")
+      parametros+=(--fragmentos "$(preguntar 'Fragmentos de continuación por golpe (2-48)' 12)")
+      parametros+=(--espera "$(preguntar 'Segundos de espera para comprobar salud (5-120)' 25)");;
+    30)
+      tipo=firmware-yara
+      ruta=$(ruta_guiada "$(preguntar 'Ruta del firmware (o guárdalo luego con --url)' './firmware.bin')")
+      parametros+=("$ruta")
+      valor=$(preguntar 'URL de descarga si el fichero no existe (vacío = no)' '')
+      [ -n "$valor" ] && parametros+=(--url "$valor")
+      if confirmar '¿Extraer contenedores (zip/7z/squashfs) antes de escanear?'; then
+        parametros+=(--extraer)
+      fi;;
     25)
       tipo=wifi-monitor
       python3 "$SCRIPT_DIR/extras_wifi.py" wifi-monitor --listar
@@ -1757,6 +1788,8 @@ despachar_extra(){
     web-login|web-sqli|web-basic) modulo=extras_web.py;;
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
     wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter) modulo=extras_wifi.py;;
+    wpsplinter-probar) exec python3 "$SCRIPT_DIR/wpsplinter_probe.py" "${restantes[@]}";;
+    firmware-yara) exec python3 "$SCRIPT_DIR/extras_firmware.py" "${restantes[@]}";;
     mitm-arp) modulo=extras_mitm.py;;
     ssh-brute) modulo=extras_ssh.py;;
     ftp-brute) modulo=extras_ftp.py;;

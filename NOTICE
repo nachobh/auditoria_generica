@@ -7,9 +7,11 @@ the RainbowCrack Project by Zhu Shuanglei <shuanglei@hotmail.com>
 OpenSSL). Its terms are in rainbowcrack/disclaimer.txt.
 
 This product includes software developed by Quentin Kaiser
-(third_party/broadcom-wps/broadcom_fingerprint.py, MIT License; see
-third_party/broadcom-wps/LICENSE). It is the WPSplinter fingerprinter
-used by the wifi-wpsplinter mode.
+(third_party/broadcom-wps/broadcom_fingerprint.py and
+third_party/broadcom-wps/broadcom_wps_monitor.yar, MIT License; see
+third_party/broadcom-wps/LICENSE). They are the WPSplinter fingerprinter
+and YARA rules used by the wifi-wpsplinter, wpsplinter-probar and
+firmware-yara modes.
 
 Third-party material referenced or downloaded (not redistributed here):
 
