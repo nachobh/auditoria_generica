@@ -2,7 +2,7 @@
 set -uo pipefail
 export LC_ALL=C
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
@@ -1118,6 +1118,7 @@ mostrar_objetivo(){
 escanear_objetivo(){
   local interfaz por_defecto forzar=0 salida rc numero linea bssid canal resto
   cargar_objetivo
+  refrescar_monitor
   por_defecto=${OBJ_MON:-$(iw dev 2>/dev/null | awk '$1=="Interface"{print $2; exit}')}
   interfaz=$(preguntar 'Interfaz WiFi para escanear (entrará en modo monitor y se quedará en él)' "$por_defecto")
   if confirmar '¿Continuar? si es tu interfaz de internet te desconectará unos segundos'; then

@@ -5,6 +5,8 @@ versionado según [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-21
+
 ### Añadido
 - Menú WiFi reorganizado en cuatro bloques (Tarjeta de red, Escaneo de
   objetivos, Ataque WPA, Ataque WPS) y navegación anidada: cada operación

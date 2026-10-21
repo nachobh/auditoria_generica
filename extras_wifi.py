@@ -449,6 +449,10 @@ def activar_monitor(interfaz, forzar=False):
         nuevos = [m for m in _interfaces_monitor() if m not in antes]
         if nuevos:
             return nuevos[0]
+        # airmon-ng dice "already enabled": la monitor ya existía
+        existentes = [m for m in _interfaces_monitor() if m.startswith(interfaz)]
+        if existentes:
+            return existentes[0]
         if _modo_interfaz(interfaz) == "monitor":
             return interfaz
         detalle = (arranque.stderr or arranque.stdout).strip().splitlines()

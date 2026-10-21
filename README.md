@@ -658,7 +658,16 @@ root) y la interfaz en modo monitor. Las evidencias (pcap completo +
 ya avisaba por OUI cuando el fabricante figuraba en la lista pública; esta
 prueba es la comprobación activa.
 
-Resultado en la red propia (MiRouter MiFibra, Huawei/Broadcom): PENDIENTE_RESULTADO
+Resultado en redes propias (oct-2026): **MiFibra-casa (Arcadyan, canal 1) →
+`LIKELY_VULNERABLE`**, con `implementation: BROADCOM_WPS_MONITOR` y evidencia
+`broadcom_proprietary_ie` en el `result.json`; el router quedó `HEALTHY` (la
+prueba no lo tumbó). En **MiFibra-7330 (Sagemcom Fast5656)** el AP rechazó la
+asociación del fingerprinter (status 802.11 19, "medium access capabilities")
+en los tres intentos → `INCONCLUSIVE`: algunos firmwares no aceptan la
+asociación mínima que usa la herramienta; no significa que el AP esté
+parcheado, sólo que no se le pudo interrogar. El `claim_boundary` del propio
+informe lo deja claro: es una huella de familia de implementación, no una
+verificación de explotación.
 
 ### Man in the middle (mitm-arp)
 
