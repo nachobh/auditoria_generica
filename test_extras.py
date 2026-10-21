@@ -83,6 +83,21 @@ class ExtraTests(unittest.TestCase):
         self.assertEqual(proceso.returncode, 0, proceso.stderr)
         self.assertIn("wash pasivo", proceso.stdout)
 
+    def test_wifi_monitor_listar_y_guardas_dry_run(self):
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--tipo", "wifi-monitor", "--listar"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("INTERFAZ", proceso.stdout)
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--modo", "monitor", "--interfaz", "noexiste0",
+             "--accion", "activar", "--dry-run"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertNotEqual(proceso.returncode, 0)
+        self.assertIn("no aparece como interfaz WiFi", proceso.stderr)
+
     def test_deauth_rechaza_mac_invalida(self):
         proceso = subprocess.run(
             ["bash", str(AUDITOR), "--tipo", "wifi-deauth", "--interfaz", "wlan0mon",

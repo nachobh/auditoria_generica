@@ -409,6 +409,7 @@ BSSID ni contraseñas reales. `--dry-run` valida el plan sin conectarse al objet
 | `wifi-pmkid` | captura dirigida con `hcxdumptool` y filtro PMKID | sólo algunos AP entregan PMKID; el análisis posterior usa formato `22000` |
 | `wifi-deauth` | `aireplay-ng -0` dirigido al BSSID (y cliente opcional) | desconecta a los clientes para forzar el 4-way handshake; interrumpe el servicio unos segundos |
 | `wifi-wps-scan` | `wash -a -j` pasivo 10–1200 s | lista APs con WPS, si anuncian bloqueo y fabricante/modelo (vía WPS o MAC); pasivo, no envía paquetes |
+| `wifi-monitor` | `ip`/`iw` sobre una interfaz propia | activa/desactiva modo monitor (equivalente a `airmon-ng`); `--listar` muestra interfaces y cuál es la de la ruta por defecto; niega activar sobre ésta salvo `--forzar` |
 | `mitm-arp` | envenenamiento ARP con `bettercap` (10–3600 s) | redirige el tráfico del objetivo por esta máquina; interrumpe la LAN y es visible para sus usuarios |
 | `ssh-brute` | hasta 200 intentos de contraseña SSH con `sshpass` | un intento por candidato, `NumberOfPasswordPrompts=1`; se detiene si el servidor limita |
 | `ftp-brute` | hasta 200 intentos de contraseña FTP con `ftplib` | un intento por candidato; para ante 421 o error de conexión |
@@ -440,7 +441,23 @@ sudo ./auditor_generico.sh --tipo wifi-deauth --interfaz wlan0mon \
 
 ./auditor_generico.sh --tipo wifi-wps-scan --interfaz wlan0mon --dry-run
 sudo ./auditor_generico.sh --tipo wifi-wps-scan --interfaz wlan0mon --canal 6 --segundos 30
+
+./auditor_generico.sh --tipo wifi-monitor --listar
+sudo ./auditor_generico.sh --tipo wifi-monitor --interfaz wlan0 --accion activar --dry-run
+sudo ./auditor_generico.sh --tipo wifi-monitor --interfaz wlan0 --accion activar
+sudo ./auditor_generico.sh --tipo wifi-monitor --interfaz wlan0 --accion desactivar
 ```
+
+`wifi-monitor` activa o desactiva modo monitor en una interfaz WiFi propia
+(`ip link set ... down`, `iw dev ... set type monitor|managed`, `ip link set
+... up`); requiere los paquetes `iw` e `iproute2`. `--listar` muestra todas
+las interfaces WiFi detectadas, su modo (si `iw` está instalado) y marca cuál
+es la interfaz de la ruta por defecto. Activar modo monitor sobre esa
+interfaz desconecta la máquina de la red (y de una sesión SSH que pase por
+ahí), así que el modo se niega a hacerlo salvo que añadas `--forzar`;
+desactivarla no requiere esa confirmación. Al desactivar, intenta reconectar
+con `nmcli device connect` si NetworkManager está disponible; si no, puede
+que tengas que reconectar manualmente.
 
 `wifi-deauth` envía de 1 a 200 desautenticaciones (`aireplay-ng -0 N -a BSSID
 [-c CLIENTE]`) a un único AP autorizado: desconecta temporalmente a los

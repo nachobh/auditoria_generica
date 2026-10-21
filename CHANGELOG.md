@@ -6,6 +6,13 @@ versionado según [SemVer](https://semver.org/lang/es/).
 ## [Unreleased]
 
 ### Añadido
+- Nuevo modo `wifi-monitor` (alias `--modo monitor`): activa o desactiva modo
+  monitor en una interfaz WiFi propia (equivalente a `airmon-ng start/stop`
+  usando `ip`/`iw`), con `--listar` para ver las interfaces WiFi detectadas,
+  su modo actual y si alguna es la de la ruta por defecto. Se niega a poner
+  en modo monitor la interfaz de la ruta por defecto salvo `--forzar`, para
+  no cortar por accidente la propia conexión a internet o la sesión SSH.
+  Disponible también en el menú guiado (grupo "Auditoría WiFi").
 - `wifi-wps-scan` ahora usa `wash -j` para leer, cuando el AP lo anuncia, el
   fabricante y modelo del elemento de información WPS (`wps_manufacturer`,
   `wps_model_name`, `wps_model_number`); si no está disponible, estima el

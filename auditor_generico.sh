@@ -105,6 +105,7 @@ alias_modo(){
   case "$1" in
     wps) printf 'wifi-wps-pin';;
     wps-scan) printf 'wifi-wps-scan';;
+    monitor) printf 'wifi-monitor';;
     pmkid) printf 'wifi-pmkid';;
     deauth) printf 'wifi-deauth';;
     mitm) printf 'mitm-arp';;
@@ -118,7 +119,7 @@ alias_modo(){
 
 es_modo_extra(){
   case "$(alias_modo "$1")" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
     captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test) return 0;;
     *) return 1;;
   esac
@@ -148,6 +149,10 @@ Tipos (--tipo):
   wifi-wps-scan escaneo pasivo de objetivos WPS con wash (bloqueo +
                 fabricante/modelo vía WPS o MAC, aviso si coincide con
                 la lista pública de marcas citadas en WPSplinter)
+  wifi-monitor  activa/desactiva modo monitor en una interfaz WiFi propia
+                (equivalente a airmon-ng start/stop; --listar para ver
+                interfaces, --accion activar|desactivar, --forzar para
+                tocar la interfaz de tu ruta por defecto)
   mitm-arp      envenenamiento ARP acotado (bettercap) en red propia o autorizada
   ssh-brute     intentos acotados de contraseña SSH con sshpass
   ftp-brute     intentos acotados de contraseña FTP con ftplib
@@ -168,9 +173,10 @@ Niveles (--nivel): 1..5 o rango 1-3 (por defecto 1-3)
 
 Opciones:
   --modo NOMBRE                alias de --tipo con nombres cortos:
-                               wps, wps-scan, pmkid, deauth, ssh, ftp, cred,
-                               web-login, web-basic, web-sqli, zip-conocido,
-                               pdf-permisos, wasm (o el nombre largo completo)
+                               wps, wps-scan, pmkid, deauth, monitor, ssh, ftp,
+                               cred, web-login, web-basic, web-sqli,
+                               zip-conocido, pdf-permisos, wasm (o el nombre
+                               largo completo)
   --tiempo N                   atajo según el modo: segundos para pmkid y
                                wps-scan; segundos bkcrack para zip-conocido;
                                minutos (--max-min) en objetivos offline
@@ -1063,8 +1069,10 @@ seleccionar_objetivo(){
         titulo='Auditoría WiFi'
         nombres=('Analizar captura o hash WPA' 'Captura dirigida' 'Escaneo pasivo WPS'
                  'Evidencia pasiva WPS' 'WPS PIN: prueba acotada' 'Captura PMKID dirigida'
-                 'Desautenticación' 'WPS PIN: prueba prolongada')
-        ids=(3 19 14 20 6 7 13 21);;
+                 'Desautenticación' 'WPS PIN: prueba prolongada'
+                 'Listar interfaces WiFi y su modo' 'Activar modo monitor'
+                 'Desactivar modo monitor')
+        ids=(3 19 14 20 6 7 13 21 25 26 27);;
       3)
         titulo='Auditoría Web'
         nombres=('Acceso tipo WordPress' 'Autenticación HTTP Basic' 'SQLi booleana en formulario GET')
@@ -1083,7 +1091,7 @@ seleccionar_objetivo(){
       printf '  0) Volver\n'
       opcion=$(preguntar 'Auditoría' 0)
       [ "$opcion" = 0 ] && break
-      if [[ "$opcion" =~ ^[1-9]$ ]] && [ "$opcion" -le "${#ids[@]}" ]; then
+      if [[ "$opcion" =~ ^[1-9][0-9]*$ ]] && [ "$opcion" -le "${#ids[@]}" ]; then
         OP_GUIA=${ids[$((opcion-1))]}
         return 0
       fi
@@ -1096,7 +1104,7 @@ guia(){
   seleccionar_objetivo
   local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24) guia_extra "$op";;
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27) guia_extra "$op";;
   esac
   case "$op" in
     1) TIPO_ARG=archivo;;
@@ -1239,6 +1247,23 @@ guia_extra(){
           parametros+=("$(ruta_guiada "$(preguntar 'Lista semilla' "$SCRIPT_DIR/ejemplos/semillas_ficticias.txt")")");;
         *) err "utilidad desconocida"; exit 2;;
       esac;;
+    25)
+      tipo=wifi-monitor
+      python3 "$SCRIPT_DIR/extras_wifi.py" wifi-monitor --listar
+      mostrar_equivalente "$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")" --tipo "$tipo" --listar
+      exit 0;;
+    26|27)
+      tipo=wifi-monitor
+      python3 "$SCRIPT_DIR/extras_wifi.py" wifi-monitor --listar
+      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi (de la lista de arriba)' '')")
+      if [ "$opcion" = 26 ]; then
+        parametros+=(--accion activar)
+        if confirmar '¿Seguro? si es tu interfaz de internet/SSH se desconectará'; then
+          parametros+=(--forzar)
+        fi
+      else
+        parametros+=(--accion desactivar)
+      fi;;
   esac
   if [ "$DRY" -eq 1 ]; then
     accion=plan
@@ -1411,7 +1436,8 @@ despachar_extra(){
         variantes) target=(python3 "$SCRIPT_DIR/generar_variantes.py");;
         demo) target=(python3 "$SCRIPT_DIR/demo_controles.py");;
         test) target=(python3 -m unittest -v test_kit test_extras
-                       test_extras_web test_wifi_capture test_wps_capture test_regresiones);;
+                       test_extras_web test_wifi_capture test_wps_capture
+                       test_wifi_monitor test_oui_lookup test_regresiones);;
       esac
       if [ "$seco" -eq 1 ]; then
         printf 'Plan: %s %s\n' "${target[*]}" "${sin_dry[*]}"
@@ -1434,7 +1460,7 @@ despachar_extra(){
   case "$tipo" in
     web-login|web-sqli|web-basic) modulo=extras_web.py;;
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
-    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan) modulo=extras_wifi.py;;
+    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor) modulo=extras_wifi.py;;
     mitm-arp) modulo=extras_mitm.py;;
     ssh-brute) modulo=extras_ssh.py;;
     ftp-brute) modulo=extras_ftp.py;;

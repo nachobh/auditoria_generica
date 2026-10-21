@@ -352,6 +352,116 @@ def deauth(interfaz, bssid, cliente=None, golpes=10, seco=False):
     return 0
 
 
+def _interfaces_wifi():
+    """Nombres de las interfaces WiFi presentes (tengan o no driver cargado)."""
+    base = Path("/sys/class/net")
+    if not base.is_dir():
+        return []
+    return sorted(p.parent.name for p in base.glob("*/wireless"))
+
+
+def _interfaz_predeterminada():
+    """Interfaz de la ruta por defecto (probable conexión a internet), o None."""
+    ip = shutil.which("ip")
+    if not ip:
+        return None
+    try:
+        salida = subprocess.run([ip, "-o", "route", "show", "default"],
+                                capture_output=True, text=True, timeout=5,
+                                check=False).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"\bdev\s+(\S+)", salida)
+    return m.group(1) if m else None
+
+
+def _modo_interfaz(interfaz):
+    """'monitor'/'managed'/otro según iw, o None si no se puede saber."""
+    iw = shutil.which("iw")
+    if not iw:
+        return None
+    try:
+        salida = subprocess.run([iw, "dev", interfaz, "info"], capture_output=True,
+                                text=True, timeout=5, check=False).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"\btype\s+(\S+)", salida)
+    return m.group(1) if m else None
+
+
+def listar_interfaces_wifi():
+    """Imprime las interfaces WiFi detectadas, su modo actual y si son la
+    interfaz con la ruta por defecto (la que probablemente te da internet:
+    pasarla a modo monitor te desconecta)."""
+    interfaces = _interfaces_wifi()
+    if not interfaces:
+        print("No se detectaron interfaces WiFi en /sys/class/net")
+        return 1
+    predeterminada = _interfaz_predeterminada()
+    print(f"{'INTERFAZ':<16}{'MODO':<26}{'RUTA POR DEFECTO'}")
+    for interfaz in interfaces:
+        modo = _modo_interfaz(interfaz) or "desconocido (instala iw)"
+        marca = "sí — ¡cuidado, es tu conexión!" if interfaz == predeterminada else "no"
+        print(f"{interfaz:<16}{modo:<26}{marca}")
+    return 0
+
+
+def wifi_monitor(interfaz, accion, forzar=False, seco=False):
+    """Activa o desactiva el modo monitor de una interfaz WiFi propia.
+
+    No ataca nada: es el equivalente a `airmon-ng start/stop`, necesario
+    antes de usar wifi-wps-scan, wifi-wps-pin, wifi-pmkid o wifi-deauth.
+    Poner en modo monitor la interfaz que te da internet o SSH te
+    desconecta; por eso se niega sobre la interfaz de la ruta por defecto
+    salvo que confirmes con --forzar.
+    """
+    if not IFACE.fullmatch(interfaz):
+        raise ValueError("interfaz inválida")
+    if accion not in ("activar", "desactivar"):
+        raise ValueError("--accion debe ser 'activar' o 'desactivar'")
+    if interfaz not in _interfaces_wifi():
+        raise ValueError(f"'{interfaz}' no aparece como interfaz WiFi en /sys/class/net "
+                          "(usa --listar para ver las disponibles)")
+    predeterminada = _interfaz_predeterminada()
+    riesgo = accion == "activar" and interfaz == predeterminada
+    if riesgo and not forzar:
+        raise ValueError(f"'{interfaz}' es la interfaz con la ruta por defecto (probablemente "
+                          "tu conexión a internet o la que sostiene esta sesión). Activar modo "
+                          "monitor la desconectará. Usa otra interfaz/adaptador, o repite con "
+                          "--forzar si de verdad quieres desconectarla")
+    if seco:
+        aviso_riesgo = " (¡desconectará tu conexión actual!)" if riesgo else ""
+        print(f"Plan: {accion} modo monitor en {interfaz}{aviso_riesgo}")
+        return 0
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo")
+    ip = shutil.which("ip")
+    iw = shutil.which("iw")
+    if not ip or not iw:
+        raise ValueError("faltan 'ip' y/o 'iw' (sudo apt-get install -y iw iproute2)")
+    tipo_destino = "monitor" if accion == "activar" else "managed"
+    subprocess.run([ip, "link", "set", interfaz, "down"], check=False, timeout=10)
+    cambio = subprocess.run([iw, "dev", interfaz, "set", "type", tipo_destino],
+                            capture_output=True, text=True, timeout=10, check=False)
+    subprocess.run([ip, "link", "set", interfaz, "up"], check=False, timeout=10)
+    if cambio.returncode != 0:
+        detalle = cambio.stderr.strip() or cambio.stdout.strip()
+        print(f"No se pudo cambiar el modo de {interfaz}{f': {detalle}' if detalle else ''}")
+        return 1
+    if accion == "activar":
+        print(f"{interfaz} en modo monitor. Úsala tal cual en wifi-wps-scan/wifi-wps-pin/"
+              f"wifi-pmkid/wifi-deauth; cuando termines, desactívalo con "
+              f"--tipo monitor --interfaz {interfaz} --accion desactivar")
+        return 0
+    nmcli = shutil.which("nmcli")
+    if nmcli:
+        subprocess.run([nmcli, "device", "connect", interfaz], capture_output=True,
+                       timeout=15, check=False)
+    print(f"{interfaz} de vuelta en modo managed. Si no recupera red sola, reconéctate "
+          "manualmente (nmcli/NetworkManager o tu gestor habitual)")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="accion", required=True)
@@ -378,6 +488,13 @@ def main():
     scan_parser.add_argument("--canal", type=int)
     scan_parser.add_argument("--segundos", type=int, default=20)
     scan_parser.add_argument("--dry-run", action="store_true")
+    monitor_parser = sub.add_parser("wifi-monitor")
+    monitor_parser.add_argument("--interfaz")
+    monitor_parser.add_argument("--accion", dest="accion_monitor",
+                                choices=("activar", "desactivar"))
+    monitor_parser.add_argument("--listar", action="store_true")
+    monitor_parser.add_argument("--forzar", action="store_true")
+    monitor_parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     try:
         if args.accion == "wifi-wps-pin":
@@ -388,6 +505,12 @@ def main():
                           args.golpes, args.dry_run)
         if args.accion == "wifi-wps-scan":
             return wps_scan(args.interfaz, args.canal, args.segundos, args.dry_run)
+        if args.accion == "wifi-monitor":
+            if args.listar:
+                return listar_interfaces_wifi()
+            if not args.interfaz or not args.accion_monitor:
+                parser.error("wifi-monitor requiere --listar, o --interfaz y --accion")
+            return wifi_monitor(args.interfaz, args.accion_monitor, args.forzar, args.dry_run)
         return pmkid(args.interfaz, args.bssid, args.canal, args.banda,
                      args.segundos, args.salida, args.dry_run)
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
