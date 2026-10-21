@@ -1101,10 +1101,12 @@ seleccionar_objetivo(){
 }
 
 guia(){
-  seleccionar_objetivo
+  # Requiere que el llamador ya haya fijado OP_GUIA (vía seleccionar_objetivo).
   local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27) guia_extra "$op";;
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27)
+      guia_extra "$op"
+      return 0;;
   esac
   case "$op" in
     1) TIPO_ARG=archivo;;
@@ -1481,30 +1483,11 @@ despachar_extra(){
   fi
 }
 
-main(){
-  local modo_extra= i
-  local -a entrada=("$@")
-  for ((i=0; i+1<${#entrada[@]}; i++)); do
-    case "${entrada[$i]}" in
-      --tipo) modo_extra=${entrada[$((i+1))]};;
-      --modo) [[ "${entrada[$((i+1))]}" =~ ^[0-9]+$ ]] || modo_extra=${entrada[$((i+1))]};;
-    esac
-  done
-  if es_modo_extra "$modo_extra"; then
-    despachar_extra "$@"
-  fi
-  parsear "$@"
-  if [ -z "$RUTA" ]; then
-    if [ "$SI" -eq 1 ]; then uso; exit 2; fi
-    guia
-    parsear_nivel
-    local -a equivalente=(--tipo "$TIPO_ARG" --nivel "$NIVEL" --motor "$MOTOR_ARG")
-    [ "$DRY" -eq 1 ] && equivalente+=(--dry-run)
-    [ "$SI" -eq 1 ] && equivalente+=(--yes)
-    [ -n "$EXT_CMD" ] && equivalente+=(--externo-cmd "$EXT_CMD")
-    equivalente+=("$RUTA")
-    mostrar_equivalente "$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")" "${equivalente[@]}"
-  fi
+# Pipeline de fichero/hash (niveles, conversión, motores, ejecución). La
+# usan tanto la invocación directa por CLI (--tipo archivo ... ruta) como
+# el menú guiado (vía ronda_guiada); en ambos casos un `exit N` aquí sólo
+# termina la ronda actual cuando se llama dentro de un subshell.
+ejecutar_archivo(){
   if [ ! -f "$RUTA" ]; then err "no existe el fichero: $RUTA"; exit 2; fi
   RUTA=$(readlink -f "$RUTA")
   OBJ_ID=$(python3 -c 'import secrets; print(secrets.token_hex(8))')
@@ -1592,6 +1575,51 @@ main(){
   fi
   resumen_final
   exit $?
+}
+
+# Una ronda completa del menú guiado, para la opción ya elegida en OP_GUIA.
+# Se invoca siempre dentro de un subshell: cualquier `exit` de aquí abajo
+# (incluido el de ejecutar_archivo o el de despachar_extra/guia_extra) sólo
+# termina esa ronda, nunca el proceso principal ni el menú.
+ronda_guiada(){
+  guia
+  [ -n "$RUTA" ] || return 0
+  parsear_nivel
+  local -a equivalente=(--tipo "$TIPO_ARG" --nivel "$NIVEL" --motor "$MOTOR_ARG")
+  [ "$DRY" -eq 1 ] && equivalente+=(--dry-run)
+  [ "$SI" -eq 1 ] && equivalente+=(--yes)
+  [ -n "$EXT_CMD" ] && equivalente+=(--externo-cmd "$EXT_CMD")
+  equivalente+=("$RUTA")
+  mostrar_equivalente "$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")" "${equivalente[@]}"
+  ejecutar_archivo
+}
+
+main(){
+  local modo_extra= i
+  local -a entrada=("$@")
+  for ((i=0; i+1<${#entrada[@]}; i++)); do
+    case "${entrada[$i]}" in
+      --tipo) modo_extra=${entrada[$((i+1))]};;
+      --modo) [[ "${entrada[$((i+1))]}" =~ ^[0-9]+$ ]] || modo_extra=${entrada[$((i+1))]};;
+    esac
+  done
+  if es_modo_extra "$modo_extra"; then
+    despachar_extra "$@"
+    exit $?
+  fi
+  parsear "$@"
+  if [ -z "$RUTA" ]; then
+    if [ "$SI" -eq 1 ]; then uso; exit 2; fi
+    # Menú guiado: vuelve a mostrarse tras cada ronda. Sólo "0) Salir" en
+    # seleccionar_objetivo termina el proceso (exit 0); todo lo demás ocurre
+    # en un subshell para que ningún `exit` de la ronda cierre el menú.
+    while true; do
+      seleccionar_objetivo
+      ( ronda_guiada )
+      printf '\n'
+    done
+  fi
+  ejecutar_archivo
 }
 
 main "$@"

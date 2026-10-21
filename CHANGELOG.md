@@ -6,6 +6,12 @@ versionado según [SemVer](https://semver.org/lang/es/).
 ## [Unreleased]
 
 ### Añadido
+- El menú guiado (sin argumentos) ya no termina el script al acabar una
+  auditoría: vuelve a mostrar el menú principal tras cada ronda (fichero o
+  modo extra) y sólo sale de verdad cuando se elige "0) Salir" en el menú
+  de grupos. Cada ronda corre en un subshell para que un fallo o una
+  cancelación tampoco cierren la sesión. La invocación directa por CLI
+  (`--tipo ...`) no cambia: sigue ejecutando una sola vez y terminando.
 - Nuevo modo `wifi-monitor` (alias `--modo monitor`): activa o desactiva modo
   monitor en una interfaz WiFi propia (equivalente a `airmon-ng start/stop`
   usando `ip`/`iw`), con `--listar` para ver las interfaces WiFi detectadas,

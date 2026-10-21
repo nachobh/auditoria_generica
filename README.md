@@ -187,6 +187,11 @@ Al terminar el menú guiado, justo antes de lanzar la prueba, se imprime el
 **comando equivalente con flags** para repetir la misma ejecución sin volver
 a pasar por el menú.
 
+El menú guiado no termina el script al acabar una auditoría (ni al
+cancelarla ni si falla): vuelve a mostrar `=== Auditoría guiada ===` para
+que elijas otra. Sólo sale de verdad al elegir **"0) Salir"** en ese menú
+principal.
+
 **Niveles (`--nivel` 1..5 o rango, por defecto `1-3`):**
 
 | Nivel | Qué hace |
