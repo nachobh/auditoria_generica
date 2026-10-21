@@ -8,6 +8,7 @@ import pwd
 import re
 import resource
 import shutil
+import sys
 import subprocess
 import tempfile
 
@@ -406,6 +407,96 @@ def listar_interfaces_wifi():
     return 0
 
 
+def _interfaces_monitor():
+    """Interfaces cuyo tipo declarado por iw es 'monitor'."""
+    iw = shutil.which("iw")
+    if not iw:
+        return []
+    try:
+        salida = subprocess.run([iw, "dev"], capture_output=True, text=True,
+                                timeout=5, check=False).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    nombre = None
+    monitores = []
+    for linea in salida.splitlines():
+        partes = linea.split()
+        if len(partes) >= 2 and partes[0] == "Interface":
+            nombre = partes[1]
+        elif len(partes) >= 2 and partes[0] == "type" and partes[1] == "monitor" and nombre:
+            monitores.append(nombre)
+    return monitores
+
+
+def activar_monitor(interfaz, forzar=False):
+    """Pone la interfaz en modo monitor y DEVUELVE el nombre real a usar.
+
+    Prefiere airmon-ng: en chips como el mt7925 (MediaTek) la interfaz
+    creada con `iw dev X set type monitor` existe pero airodump-ng no
+    consigue sintonizarla (ioctl SIOCSIWMODE: Operation not supported),
+    mientras que la <iface>mon de airmon-ng sí funciona. airmon-ng hace
+    además `check kill` (tumba NetworkManager), así que al desactivar hay
+    que resucitarlo.
+    """
+    airmon = shutil.which("airmon-ng")
+    if airmon:
+        antes = set(_interfaces_monitor())
+        subprocess.run([airmon, "check", "kill"], capture_output=True,
+                       timeout=90, check=False)
+        arranque = subprocess.run([airmon, "start", interfaz],
+                                  capture_output=True, text=True, timeout=90,
+                                  check=False)
+        nuevos = [m for m in _interfaces_monitor() if m not in antes]
+        if nuevos:
+            return nuevos[0]
+        if _modo_interfaz(interfaz) == "monitor":
+            return interfaz
+        detalle = (arranque.stderr or arranque.stdout).strip().splitlines()
+        raise ValueError("airmon-ng no creó una interfaz monitor"
+                         + (f": {detalle[-1]}" if detalle else ""))
+    ip = shutil.which("ip")
+    iw = shutil.which("iw")
+    if not ip or not iw:
+        raise ValueError("faltan 'ip' y/o 'iw' (sudo apt-get install -y iw iproute2)")
+    subprocess.run([ip, "link", "set", interfaz, "down"], check=False, timeout=10)
+    cambio = subprocess.run([iw, "dev", interfaz, "set", "type", "monitor"],
+                            capture_output=True, text=True, timeout=10, check=False)
+    subprocess.run([ip, "link", "set", interfaz, "up"], check=False, timeout=10)
+    if cambio.returncode != 0 or _modo_interfaz(interfaz) != "monitor":
+        detalle = (cambio.stderr or cambio.stdout).strip()
+        raise ValueError(f"no se pudo poner {interfaz} en modo monitor"
+                         + (f": {detalle}" if detalle else ""))
+    return interfaz
+
+
+def desactivar_monitor(interfaz):
+    """Saca la interfaz de modo monitor y devuelve la base gestionada."""
+    airmon = shutil.which("airmon-ng")
+    if airmon and _modo_interfaz(interfaz) == "monitor":
+        subprocess.run([airmon, "stop", interfaz], capture_output=True,
+                       timeout=90, check=False)
+    if _modo_interfaz(interfaz) == "monitor":
+        ip = shutil.which("ip")
+        iw = shutil.which("iw")
+        subprocess.run([ip, "link", "set", interfaz, "down"], check=False, timeout=10)
+        subprocess.run([iw, "dev", interfaz, "set", "type", "managed"],
+                       capture_output=True, timeout=10, check=False)
+        subprocess.run([ip, "link", "set", interfaz, "up"], check=False, timeout=10)
+    base = interfaz[:-3] if interfaz.endswith("mon") else interfaz
+    nmcli = shutil.which("nmcli")
+    if nmcli:
+        # airmon-ng check kill se llevó NetworkManager por delante: si está
+        # muerto, resucítalo antes de reconectar la interfaz base.
+        nm = subprocess.run(["systemctl", "is-active", "NetworkManager"],
+                            capture_output=True, text=True, timeout=10, check=False)
+        if nm.stdout.strip() != "active":
+            subprocess.run(["systemctl", "start", "NetworkManager"],
+                           capture_output=True, timeout=30, check=False)
+        subprocess.run([nmcli, "device", "connect", base], capture_output=True,
+                       timeout=15, check=False)
+    return base
+
+
 def wifi_monitor(interfaz, accion, forzar=False, seco=False):
     """Activa o desactiva el modo monitor de una interfaz WiFi propia.
 
@@ -419,7 +510,7 @@ def wifi_monitor(interfaz, accion, forzar=False, seco=False):
         raise ValueError("interfaz inválida")
     if accion not in ("activar", "desactivar"):
         raise ValueError("--accion debe ser 'activar' o 'desactivar'")
-    if interfaz not in _interfaces_wifi():
+    if interfaz not in _interfaces_wifi() and _modo_interfaz(interfaz) != "monitor":
         raise ValueError(f"'{interfaz}' no aparece como interfaz WiFi en /sys/class/net "
                           "(usa --listar para ver las disponibles)")
     predeterminada = _interfaz_predeterminada()
@@ -435,31 +526,165 @@ def wifi_monitor(interfaz, accion, forzar=False, seco=False):
         return 0
     if os.geteuid() != 0:
         raise ValueError("requiere sudo")
-    ip = shutil.which("ip")
-    iw = shutil.which("iw")
-    if not ip or not iw:
-        raise ValueError("faltan 'ip' y/o 'iw' (sudo apt-get install -y iw iproute2)")
-    tipo_destino = "monitor" if accion == "activar" else "managed"
-    subprocess.run([ip, "link", "set", interfaz, "down"], check=False, timeout=10)
-    cambio = subprocess.run([iw, "dev", interfaz, "set", "type", tipo_destino],
-                            capture_output=True, text=True, timeout=10, check=False)
-    subprocess.run([ip, "link", "set", interfaz, "up"], check=False, timeout=10)
-    if cambio.returncode != 0:
-        detalle = cambio.stderr.strip() or cambio.stdout.strip()
-        print(f"No se pudo cambiar el modo de {interfaz}{f': {detalle}' if detalle else ''}")
-        return 1
     if accion == "activar":
-        print(f"{interfaz} en modo monitor. Úsala tal cual en wifi-wps-scan/wifi-wps-pin/"
-              f"wifi-pmkid/wifi-deauth; cuando termines, desactívalo con "
-              f"--tipo monitor --interfaz {interfaz} --accion desactivar")
+        monitor = activar_monitor(interfaz, forzar)
+        print(f"{monitor} en modo monitor. Úsala tal cual en wifi-escanear/"
+              f"wifi-wps-scan/wifi-wps-pin/wifi-pmkid/wifi-deauth/wifi-wpsplinter; "
+              f"cuando termines, desactívala con --tipo monitor --interfaz {monitor} "
+              f"--accion desactivar")
         return 0
-    nmcli = shutil.which("nmcli")
-    if nmcli:
-        subprocess.run([nmcli, "device", "connect", interfaz], capture_output=True,
-                       timeout=15, check=False)
-    print(f"{interfaz} de vuelta en modo managed. Si no recupera red sola, reconéctate "
+    base = desactivar_monitor(interfaz)
+    print(f"Modo monitor desactivado. Si {base} no recupera red sola, reconéctate "
           "manualmente (nmcli/NetworkManager o tu gestor habitual)")
     return 0
+
+
+def _ap_del_csv(csv_path):
+    """APs del CSV de airodump: [(bssid, canal, essid, potencia)], sin duplicados."""
+    from wifi_capture_utils import normalizar_mac
+    vistos = {}
+    with Path(csv_path).open(newline="", encoding="utf-8", errors="replace") as archivo:
+        import csv as _csv
+        for fila in _csv.reader(archivo):
+            if not fila:
+                continue
+            primero = fila[0].strip()
+            if primero == "Station MAC":
+                break
+            if primero == "BSSID" or len(fila) < 14:
+                continue
+            try:
+                mac = normalizar_mac(primero)
+                canal = int(fila[3].strip())
+                potencia = int(fila[8].strip())
+            except ValueError:
+                continue
+            if not 1 <= canal <= 233:
+                continue
+            nombre = fila[13].strip() or "(oculta)"
+            if mac not in vistos or potencia > vistos[mac][3]:
+                vistos[mac] = (mac, canal, nombre, potencia)
+    return sorted(vistos.values(), key=lambda ap: -ap[3])
+
+
+def wifi_escanear(interfaz, banda="abg", segundos=20, forzar=False, seco=False):
+    """Escanea el entorno y lista objetivos numerados para elegir uno.
+
+    Si la interfaz no está en modo monitor la activa (con --forzar si es la
+    de tu ruta por defecto) y DEJA el modo monitor activo al terminar: sólo
+    wifi-monitor --accion desactivar lo quita. Imprime una línea
+    `MONITOR <interfaz>` y luego `AP <n> <BSSID> <canal> <potencia> <ESSID>`
+    por cada red vista, en orden de señal.
+    """
+    if not IFACE.fullmatch(interfaz):
+        raise ValueError("interfaz inválida")
+    if not 5 <= segundos <= 1200:
+        raise ValueError("segundos fuera de 5..1200")
+    if banda not in ("bg", "a", "abg"):
+        raise ValueError("banda debe ser bg, a o abg")
+    if seco:
+        print(f"Plan: escanear con {interfaz} (banda {banda}, {segundos}s); "
+              "activar monitor si hace falta y dejarlo activo")
+        return 0
+    if _modo_interfaz(interfaz) == "monitor":
+        monitor = interfaz
+    else:
+        if interfaz not in _interfaces_wifi():
+            raise ValueError(f"'{interfaz}' no es una interfaz WiFi; usa --listar")
+        monitor = activar_monitor(interfaz, forzar)
+    airodump = shutil.which("airodump-ng")
+    if not airodump:
+        raise ValueError("falta airodump-ng (paquete aircrack-ng)")
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo")
+    limitar_captura()
+    with tempfile.TemporaryDirectory(prefix="kit-escaneo-") as tmp:
+        proceso = subprocess.Popen(
+            [airodump, "--band", banda, "--output-format", "csv",
+             "--write-interval", "1", "-w", Path(tmp) / "scan", monitor],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.run(["sleep", str(segundos)], check=False)
+            proceso.terminate()
+            proceso.wait(timeout=15)
+        finally:
+            if proceso.poll() is None:
+                proceso.kill()
+        csvs = sorted(Path(tmp).glob("scan-*.csv"))
+        if not csvs:
+            raise ValueError("el escaneo no creó CSV; comprueba la interfaz monitor")
+        aps = _ap_del_csv(csvs[-1])
+    print(f"MONITOR {monitor}")
+    if not aps:
+        print("No se vio ninguna red; prueba otra banda o más segundos")
+        return 1
+    for numero, (mac, canal, nombre, potencia) in enumerate(aps, 1):
+        print(f"AP {numero} {mac} {canal} {potencia} {nombre}")
+    return 0
+
+
+def wifi_wpsplinter(interfaz, ssid, salida=None, seco=False):
+    """Huella activa WPSplinter (desbordamiento WPS en monitor Broadcom).
+
+    Lanza el fingerprinter de Quentin Kaiser (third_party/broadcom-wps, MIT)
+    contra un SSID: envía EAP fragmentados y clasifica el reensamblador del
+    AP como LIKELY_VULNERABLE / LIKELY_NOT_VULNERABLE / INCONCLUSIVE. No
+    explota nada ni tumba el AP; es una prueba pasiva-activa acotada.
+    Requiere root, la interfaz en modo monitor y la librería scapy.
+    """
+    if not IFACE.fullmatch(interfaz):
+        raise ValueError("interfaz inválida")
+    if not ssid or len(ssid.encode("utf-8")) > 32:
+        raise ValueError("SSID de 1 a 32 bytes")
+    script = Path(__file__).resolve().parent / "third_party" / "broadcom-wps" / "broadcom_fingerprint.py"
+    if not script.is_file():
+        raise ValueError(f"falta {script}")
+    if seco:
+        print(f"Plan: fingerprinter WPSplinter sobre '{ssid}' con {interfaz} "
+              f"(requiere root, monitor y scapy)")
+        return 0
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo")
+    if _modo_interfaz(interfaz) != "monitor":
+        raise ValueError(f"{interfaz} no está en modo monitor; usa wifi-monitor "
+                         "--accion activar o la opción 'Escaneo de objetivos'")
+    try:
+        import scapy  # noqa: F401
+    except ImportError:
+        raise ValueError("falta la librería scapy (python3 -m pip install --user "
+                         "--break-system-packages scapy)")
+    if salida:
+        destino = Path(salida).expanduser()
+    else:
+        inicio = Path.home()
+        usuario = os.environ.get("SUDO_USER")
+        if usuario and os.geteuid() == 0:
+            try:
+                inicio = Path(pwd.getpwnam(usuario).pw_dir)
+            except KeyError:
+                pass
+        destino = inicio / "capturas_wifi" / "wpsplinter"
+    destino.mkdir(parents=True, exist_ok=True, mode=0o700)
+    print(f"Evidencias (pcap + JSON) en: {destino}")
+    try:
+        subprocess.run(["iw", "dev", interfaz, "info"], capture_output=True,
+                       timeout=5, check=True)
+    except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        pass
+    rc = subprocess.run([sys.executable, str(script), "--interface", interfaz,
+                         "--ssid", ssid], cwd=destino, check=False).returncode
+    usuario = os.environ.get("SUDO_USER")
+    if usuario and os.geteuid() == 0:
+        subprocess.run(["chown", "-R", usuario, str(destino)], capture_output=True,
+                       timeout=15, check=False)
+    if rc == 0:
+        print("Veredicto concluyente: revisa result.json y el informe anterior.")
+    elif rc == 1:
+        print("Veredicto INCONCLUSIVE: el AP no respondió de forma clara; "
+              "prueba con más duración o comprueba que anuncia WPS.")
+    else:
+        print("El fingerprinter terminó con error (2): revisa SSID exacto e interfaz.")
+    return rc
 
 
 def main():
@@ -488,6 +713,17 @@ def main():
     scan_parser.add_argument("--canal", type=int)
     scan_parser.add_argument("--segundos", type=int, default=20)
     scan_parser.add_argument("--dry-run", action="store_true")
+    escanear_parser = sub.add_parser("wifi-escanear")
+    escanear_parser.add_argument("--interfaz", required=True)
+    escanear_parser.add_argument("--banda", choices=("bg", "a", "abg"), default="abg")
+    escanear_parser.add_argument("--segundos", type=int, default=20)
+    escanear_parser.add_argument("--forzar", action="store_true")
+    escanear_parser.add_argument("--dry-run", action="store_true")
+    wpsplinter_parser = sub.add_parser("wifi-wpsplinter")
+    wpsplinter_parser.add_argument("--interfaz", required=True)
+    wpsplinter_parser.add_argument("--ssid", required=True)
+    wpsplinter_parser.add_argument("--salida")
+    wpsplinter_parser.add_argument("--dry-run", action="store_true")
     monitor_parser = sub.add_parser("wifi-monitor")
     monitor_parser.add_argument("--interfaz")
     monitor_parser.add_argument("--accion", dest="accion_monitor",
@@ -505,6 +741,11 @@ def main():
                           args.golpes, args.dry_run)
         if args.accion == "wifi-wps-scan":
             return wps_scan(args.interfaz, args.canal, args.segundos, args.dry_run)
+        if args.accion == "wifi-escanear":
+            return wifi_escanear(args.interfaz, args.banda, args.segundos,
+                                 args.forzar, args.dry_run)
+        if args.accion == "wifi-wpsplinter":
+            return wifi_wpsplinter(args.interfaz, args.ssid, args.salida, args.dry_run)
         if args.accion == "wifi-monitor":
             if args.listar:
                 return listar_interfaces_wifi()

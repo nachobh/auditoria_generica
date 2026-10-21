@@ -18,6 +18,7 @@ SOLO_CAPTURA=0
 RUN_DIR=
 MON_IFACE=
 MON_CREADA=0
+MANTENER_MONITOR=0
 SCAN_PID=
 CAP_PID=
 
@@ -34,6 +35,7 @@ Uso:
 
 Opciones:
   --interfaz NOMBRE        interfaz WiFi; acepta una ya en modo monitor
+  --mantener-monitor       no desactivar el modo monitor al terminar
   --ssid NOMBRE           nombre exacto de la red; si falta BSSID/canal, escanea
   --bssid MAC             selecciona un AP concreto; obligatorio para --deauth
   --canal N               escanea sólo ese canal y selecciona su AP (1..233)
@@ -61,6 +63,7 @@ while [ $# -gt 0 ]; do
     --help|-h) uso; exit 0;;
     --dry-run) SECO=1; shift;;
     --solo-captura) SOLO_CAPTURA=1; shift;;
+    --mantener-monitor) MANTENER_MONITOR=1; shift;;
     --interfaz|--ssid|--bssid|--canal|--banda|--escaneo-seg|--minutos|--salida|--deauth)
       valor "$@"
       case "$1" in
@@ -140,7 +143,9 @@ limpiar(){
   trap - EXIT INT TERM
   parar_pid "$SCAN_PID"
   parar_pid "$CAP_PID"
-  if [ "$MON_CREADA" -eq 1 ] && [ -n "$MON_IFACE" ]; then
+  if [ "$MANTENER_MONITOR" -eq 1 ]; then
+    [ -n "$MON_IFACE" ] && info "modo monitor mantenido activo en $MON_IFACE (así lo pediste)"
+  elif [ "$MON_CREADA" -eq 1 ] && [ -n "$MON_IFACE" ]; then
     airmon-ng stop "$MON_IFACE" >/dev/null 2>&1 || true
   fi
   if [ -n "$RUN_DIR" ] && [ -d "$RUN_DIR" ]; then

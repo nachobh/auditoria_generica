@@ -6,6 +6,11 @@ the RainbowCrack Project by Zhu Shuanglei <shuanglei@hotmail.com>
 (rainbowcrack/src/, version 1.2, patched to build with modern g++ and
 OpenSSL). Its terms are in rainbowcrack/disclaimer.txt.
 
+This product includes software developed by Quentin Kaiser
+(third_party/broadcom-wps/broadcom_fingerprint.py, MIT License; see
+third_party/broadcom-wps/LICENSE). It is the WPSplinter fingerprinter
+used by the wifi-wpsplinter mode.
+
 Third-party material referenced or downloaded (not redistributed here):
 
 - SecLists wordlists (https://github.com/danielmiessler/SecLists),
@@ -23,3 +28,5 @@ Third-party material referenced or downloaded (not redistributed here):
   binary invoked by the WPS modes.
 - bkcrack (https://github.com/kimci86/bkcrack), MIT License. External
   binary invoked by the zip-conocido mode.
+- Scapy (https://www.scapy.net/), GPLv2+. Python library imported at
+  runtime by the WPSplinter fingerprinter; not redistributed here.

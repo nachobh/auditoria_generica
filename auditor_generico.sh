@@ -109,6 +109,8 @@ alias_modo(){
     pmkid) printf 'wifi-pmkid';;
     deauth) printf 'wifi-deauth';;
     mitm) printf 'mitm-arp';;
+    wpsplinter) printf 'wifi-wpsplinter';;
+    escanear) printf 'wifi-escanear';;
     ssh) printf 'ssh-brute';;
     ftp) printf 'ftp-brute';;
     cred) printf 'cred-scan';;
@@ -119,7 +121,7 @@ alias_modo(){
 
 es_modo_extra(){
   case "$(alias_modo "$1")" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
     captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test) return 0;;
     *) return 1;;
   esac
@@ -150,6 +152,12 @@ Tipos (--tipo):
                 fabricante/modelo vía WPS o MAC, aviso si coincide con
                 la lista pública de marcas citadas en WPSplinter)
   wifi-monitor  activa/desactiva modo monitor en una interfaz WiFi propia
+  wifi-escanear escaneo del entorno y lista numerada de objetivos; deja el
+                modo monitor activo (sólo wifi-monitor --accion desactivar
+                lo quita)
+  wifi-wpsplinter huella activa de WPSplinter (desbordamiento WPS en monitores
+                Broadcom, Quentin Kaiser oct-2026): envía EAP fragmentados y
+                clasifica el reensamblador del AP sin explotarlo
                 (equivalente a airmon-ng start/stop; --listar para ver
                 interfaces, --accion activar|desactivar, --forzar para
                 tocar la interfaz de tu ruta por defecto)
@@ -223,7 +231,9 @@ EOF
 preguntar(){
   if [ "$SI" -eq 1 ]; then printf '%s' "$2"; return; fi
   local r
-  read -r -p "$1 [$2]: " r || r=""
+  # EOF (Ctrl-D) imprime el defecto y devuelve 141: los bucles de validación
+  # lo usan para no loopear infinitamente sobre una entrada muerta.
+  read -r -p "$1 [$2]: " r || { printf '%s' "$2"; return 141; }
   printf '%s' "${r:-$2}"
 }
 
@@ -1050,53 +1060,330 @@ mostrar_equivalente(){
   printf '\n\n'
 }
 
+# --- objetivo en memoria -------------------------------------------------
+# El objetivo elegido (BSSID/ESSID/canal) y la interfaz monitor activa se
+# guardan en variables globales y se sincronizan con un fichero de estado
+# para que sobrevivan a las rondas que corren en subshell. Lo borra todo
+# "Desactivar modo monitor" en lo relativo a la interfaz; el objetivo se
+# mantiene hasta elegir otro.
+OBJ_BSSID=""
+OBJ_ESSID=""
+OBJ_CANAL=""
+OBJ_MON=""
+OBJ_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/kit-auditoria-claves/objetivo.env"
+
+guardar_objetivo(){
+  mkdir -p -- "$(dirname -- "$OBJ_FILE")" 2>/dev/null || return 0
+  { printf 'OBJ_BSSID=%q\n' "$OBJ_BSSID"
+    printf 'OBJ_ESSID=%q\n' "$OBJ_ESSID"
+    printf 'OBJ_CANAL=%q\n' "$OBJ_CANAL"
+    printf 'OBJ_MON=%q\n' "$OBJ_MON"; } > "$OBJ_FILE" 2>/dev/null || true
+}
+
+cargar_objetivo(){
+  # shellcheck disable=SC1090
+  [ -f "$OBJ_FILE" ] && . "$OBJ_FILE" 2>/dev/null
+  return 0
+}
+
+monitor_activo(){
+  iw dev 2>/dev/null | awk '$1=="Interface"{n=$2} $1=="type" && $2=="monitor"{print n; exit}'
+}
+
+refrescar_monitor(){
+  local m
+  m=$(monitor_activo)
+  if [ -n "$m" ] && [ "$m" != "$OBJ_MON" ]; then
+    OBJ_MON=$m
+    guardar_objetivo
+  elif [ -z "$m" ] && [ -n "$OBJ_MON" ]; then
+    OBJ_MON=""
+    guardar_objetivo
+  fi
+}
+
+mostrar_objetivo(){
+  if [ -z "$OBJ_BSSID" ] && [ -z "$OBJ_ESSID" ]; then
+    printf '    (sin objetivo: usa "Escanear y elegir")\n'
+  else
+    printf '    ESSID: %s · BSSID: %s · canal: %s\n' "${OBJ_ESSID:-?}" "${OBJ_BSSID:-?}" "${OBJ_CANAL:-?}"
+  fi
+  if [ -n "$OBJ_MON" ]; then
+    printf '    monitor activo: %s\n' "$OBJ_MON"
+  else
+    printf '    monitor: desactivado\n'
+  fi
+}
+
+escanear_objetivo(){
+  local interfaz por_defecto forzar=0 salida rc numero linea bssid canal resto
+  cargar_objetivo
+  por_defecto=${OBJ_MON:-$(iw dev 2>/dev/null | awk '$1=="Interface"{print $2; exit}')}
+  interfaz=$(preguntar 'Interfaz WiFi para escanear (entrará en modo monitor y se quedará en él)' "$por_defecto")
+  if confirmar '¿Continuar? si es tu interfaz de internet te desconectará unos segundos'; then
+    forzar=1
+  else
+    return 1
+  fi
+  local -a orden=(python3 "$SCRIPT_DIR/extras_wifi.py" wifi-escanear --interfaz "$interfaz")
+  [ "$forzar" -eq 1 ] && orden+=(--forzar)
+  info "escaneando el entorno (unos 20 s)..."
+  salida=$("${orden[@]}" 2>&1)
+  rc=$?
+  printf '%s\n' "$salida"
+  if [ $rc -ne 0 ]; then
+    err "escaneo sin resultados"
+    return 1
+  fi
+  refrescar_monitor
+  while true; do
+    printf '\nObjetivos vistos (por señal):\n'
+    printf '%s\n' "$salida" | awk '$1=="AP"{printf "  %s) %s  BSSID %s  canal %s  %s dBm\n", $2, substr($0, index($0,$6)), $3, $4, $5}'
+    numero=$(preguntar 'Número del objetivo (0 = no elegir)' '1')
+    [ "$numero" = 0 ] && return 1
+    linea=$(printf '%s\n' "$salida" | awk -v n="$numero" '$1=="AP" && $2==n {print; exit}')
+    [ -n "$linea" ] || { err "número fuera de la lista"; continue; }
+    bssid=$(printf '%s' "$linea" | awk '{print $3}')
+    canal=$(printf '%s' "$linea" | awk '{print $4}')
+    resto=$(printf '%s' "$linea" | awk '{out=""; for(i=6;i<=NF;i++) out=out (i>6?" ":"") $i; print out}')
+    OBJ_BSSID=$bssid
+    OBJ_CANAL=$canal
+    OBJ_ESSID=$resto
+    guardar_objetivo
+    ok "objetivo en memoria: ESSID='$OBJ_ESSID' BSSID=$OBJ_BSSID canal=$OBJ_CANAL (monitor: ${OBJ_MON:-$interfaz})"
+    return 0
+  done
+}
+
+preguntar_bssid(){
+  local r
+  while true; do
+    r=$(preguntar 'BSSID del AP autorizado (o "escanear" para elegir objetivo)' "$OBJ_BSSID") || {
+      printf '%s' "$r"; return 0; }
+    case "$r" in
+      escanear|ESCANEAR|E) escanear_objetivo; continue;;
+    esac
+    if [[ "$r" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
+      OBJ_BSSID=$(printf '%s' "$r" | tr '[:lower:]' '[:upper:]')
+      guardar_objetivo
+      printf '%s' "$OBJ_BSSID"
+      return 0
+    fi
+    err "BSSID inválido: usa AA:BB:CC:DD:EE:FF, deja vacío para reutilizar el objetivo en memoria o escribe 'escanear'"
+  done
+}
+
+preguntar_ssid(){
+  local r
+  while true; do
+    r=$(preguntar 'SSID de la red autorizada (o "escanear" para elegir objetivo)' "$OBJ_ESSID") || {
+      printf '%s' "$r"; return 0; }
+    case "$r" in
+      escanear|ESCANEAR|E) escanear_objetivo; continue;;
+    esac
+    if [ -n "$r" ]; then
+      OBJ_ESSID=$r
+      guardar_objetivo
+      printf '%s' "$r"
+      return 0
+    fi
+    err "necesito un SSID, o escribe 'escanear' para elegir objetivo"
+  done
+}
+
+preguntar_canal(){
+  local r
+  while true; do
+    r=$(preguntar 'Canal del AP' "$OBJ_CANAL") || { printf '%s' "$r"; return 0; }
+    if [[ "$r" =~ ^[0-9]+$ ]] && [ "$r" -ge 1 ] && [ "$r" -le 233 ]; then
+      OBJ_CANAL=$r
+      guardar_objetivo
+      printf '%s' "$r"
+      return 0
+    fi
+    err "canal inválido (1..233); 'escanear' en el BSSID también lo rellena"
+  done
+}
+
+preguntar_interfaz_mon(){
+  local r
+  refrescar_monitor
+  r=$(preguntar "$1" "${OBJ_MON:-wlan0mon}")
+  printf '%s' "$r"
+}
+
+# --- menús ---------------------------------------------------------------
+# Cada operación se ejecuta en un subshell (ningún exit suelta el menú) y
+# al terminar se recarga el estado del objetivo y se VUELVE AL SUBMENÚ
+# anterior, no al menú principal.
+
+ejecutar_ronda(){
+  ( OP_GUIA=$1 ronda_guiada )
+  cargar_objetivo
+  refrescar_monitor
+  printf '\n'
+}
+
+menu_tarjeta_wifi(){
+  local opcion
+  while true; do
+    printf '\n=== WiFi · Tarjeta de red ===\n'
+    printf '  1) Listar interfaces WiFi y su modo\n  2) Activar modo monitor\n  3) Desactivar modo monitor\n  0) Volver\n'
+    opcion=$(preguntar 'Opción' 0)
+    case "$opcion" in
+      0) return 0;;
+      1) ejecutar_ronda 25;;
+      2) ejecutar_ronda 26;;
+      3) ejecutar_ronda 27;;
+      *) err "opción desconocida: $opcion";;
+    esac
+  done
+}
+
+menu_wifi(){
+  local opcion
+  while true; do
+    printf '\n=== Auditoría WiFi ===\n'
+    printf '  1) Tarjeta de red (interfaces, modo monitor)\n  2) Escaneo de objetivos\n  3) Ataque WPA\n  4) Ataque WPS\n  0) Volver\n'
+    mostrar_objetivo
+    opcion=$(preguntar 'Bloque' 0)
+    case "$opcion" in
+      0) return 0;;
+      1) menu_tarjeta_wifi;;
+      2) menu_escaneo;;
+      3) menu_wpa;;
+      4) menu_wps;;
+      *) err "opción desconocida: $opcion";;
+    esac
+  done
+}
+
+menu_escaneo(){
+  local opcion
+  while true; do
+    printf '\n=== WiFi · Escaneo de objetivos ===\n'
+    printf '  1) Escanear y elegir objetivo (deja el monitor activo)\n  2) Ver objetivo en memoria\n  0) Volver\n'
+    mostrar_objetivo
+    opcion=$(preguntar 'Opción' 0)
+    case "$opcion" in
+      0) return 0;;
+      1) escanear_objetivo;;
+      2) mostrar_objetivo;;
+      *) err "opción desconocida: $opcion";;
+    esac
+  done
+}
+
+menu_wpa(){
+  local opcion
+  while true; do
+    printf '\n=== WiFi · Ataque WPA ===\n'
+    printf '  1) Analizar captura o hash WPA\n  2) Captura dirigida (con desautenticación)\n  3) Captura PMKID dirigida\n  4) Desautenticación\n  0) Volver\n'
+    mostrar_objetivo
+    opcion=$(preguntar 'Opción' 0)
+    case "$opcion" in
+      0) return 0;;
+      1) ejecutar_ronda 3;;
+      2) ejecutar_ronda 19;;
+      3) ejecutar_ronda 7;;
+      4) ejecutar_ronda 13;;
+      *) err "opción desconocida: $opcion";;
+    esac
+  done
+}
+
+menu_wps(){
+  local opcion
+  while true; do
+    printf '\n=== WiFi · Ataque WPS ===\n'
+    printf '  1) Escaneo pasivo WPS (wash)\n  2) Evidencia pasiva WPS (pcap)\n  3) WPS PIN: prueba acotada (Reaver)\n  4) WPS PIN: prueba prolongada (Reaver)\n  5) WPSplinter: huella Broadcom (fingerprinter)\n  0) Volver\n'
+    mostrar_objetivo
+    opcion=$(preguntar 'Opción' 0)
+    case "$opcion" in
+      0) return 0;;
+      1) ejecutar_ronda 14;;
+      2) ejecutar_ronda 20;;
+      3) ejecutar_ronda 6;;
+      4) ejecutar_ronda 21;;
+      5) ejecutar_ronda 28;;
+      *) err "opción desconocida: $opcion";;
+    esac
+  done
+}
+
+menu_ficheros(){
+  local -a nombres=('Fichero cifrado (rar/zip/7z/pdf/keepass)' 'Office / Excel' 'Hash suelto'
+           'Formato propio con verificador externo' 'ZIP ZipCrypto: texto conocido'
+           'PDF: permisos y clave de apertura' 'Máscaras largas reanudables')
+  local -a ids=(1 2 4 5 8 9 22)
+  local opcion
+  while true; do
+    printf '\n=== Auditoría de ficheros ===\n'
+    local i
+    for ((i=0; i<${#nombres[@]}; i++)); do printf '  %d) %s\n' "$((i+1))" "${nombres[$i]}"; done
+    printf '  0) Volver\n'
+    opcion=$(preguntar 'Auditoría' 0)
+    [ "$opcion" = 0 ] && return 0
+    if [[ "$opcion" =~ ^[1-9][0-9]*$ ]] && [ "$opcion" -le "${#ids[@]}" ]; then
+      ejecutar_ronda "${ids[$((opcion-1))]}"
+    else
+      err "opción desconocida: $opcion"
+    fi
+  done
+}
+
+menu_web(){
+  local -a nombres=('Acceso tipo WordPress' 'Autenticación HTTP Basic' 'SQLi booleana en formulario GET')
+  local -a ids=(10 17 11)
+  local opcion i
+  while true; do
+    printf '\n=== Auditoría Web ===\n'
+    for ((i=0; i<${#nombres[@]}; i++)); do printf '  %d) %s\n' "$((i+1))" "${nombres[$i]}"; done
+    printf '  0) Volver\n'
+    opcion=$(preguntar 'Auditoría' 0)
+    [ "$opcion" = 0 ] && return 0
+    if [[ "$opcion" =~ ^[1-9][0-9]*$ ]] && [ "$opcion" -le "${#ids[@]}" ]; then
+      ejecutar_ronda "${ids[$((opcion-1))]}"
+    else
+      err "opción desconocida: $opcion"
+    fi
+  done
+}
+
+menu_otros(){
+  local -a nombres=('SSH: prueba de contraseña' 'FTP: prueba de contraseña'
+           'Buscar credenciales expuestas' 'Inventario WASM'
+           'MITM ARP' 'Utilidades: demo / variantes / tests')
+  local -a ids=(15 24 16 12 18 23)
+  local opcion i
+  while true; do
+    printf '\n=== Otros ===\n'
+    for ((i=0; i<${#nombres[@]}; i++)); do printf '  %d) %s\n' "$((i+1))" "${nombres[$i]}"; done
+    printf '  0) Volver\n'
+    opcion=$(preguntar 'Auditoría' 0)
+    [ "$opcion" = 0 ] && return 0
+    if [[ "$opcion" =~ ^[1-9][0-9]*$ ]] && [ "$opcion" -le "${#ids[@]}" ]; then
+      ejecutar_ronda "${ids[$((opcion-1))]}"
+    else
+      err "opción desconocida: $opcion"
+    fi
+  done
+}
+
 seleccionar_objetivo(){
-  local grupo opcion titulo i
-  local -a nombres=() ids=()
+  local grupo
   while true; do
     printf '=== Auditoría guiada ===\n'
     printf '  1) Auditoría de ficheros\n  2) Auditoría WiFi\n  3) Auditoría Web\n  4) Otros\n  0) Salir\n'
     grupo=$(preguntar 'Grupo' 0)
     case "$grupo" in
       0) exit 0;;
-      1)
-        titulo='Auditoría de ficheros'
-        nombres=('Fichero cifrado (rar/zip/7z/pdf/keepass)' 'Office / Excel' 'Hash suelto'
-                 'Formato propio con verificador externo' 'ZIP ZipCrypto: texto conocido'
-                 'PDF: permisos y clave de apertura' 'Máscaras largas reanudables')
-        ids=(1 2 4 5 8 9 22);;
-      2)
-        titulo='Auditoría WiFi'
-        nombres=('Analizar captura o hash WPA' 'Captura dirigida' 'Escaneo pasivo WPS'
-                 'Evidencia pasiva WPS' 'WPS PIN: prueba acotada' 'Captura PMKID dirigida'
-                 'Desautenticación' 'WPS PIN: prueba prolongada'
-                 'Listar interfaces WiFi y su modo' 'Activar modo monitor'
-                 'Desactivar modo monitor')
-        ids=(3 19 14 20 6 7 13 21 25 26 27);;
-      3)
-        titulo='Auditoría Web'
-        nombres=('Acceso tipo WordPress' 'Autenticación HTTP Basic' 'SQLi booleana en formulario GET')
-        ids=(10 17 11);;
-      4)
-        titulo=Otros
-        nombres=('SSH: prueba de contraseña' 'FTP: prueba de contraseña'
-                 'Buscar credenciales expuestas' 'Inventario WASM'
-                 'MITM ARP' 'Utilidades: demo / variantes / tests')
-        ids=(15 24 16 12 18 23);;
-      *) err "grupo desconocido: $grupo"; continue;;
+      1) menu_ficheros;;
+      2) menu_wifi;;
+      3) menu_web;;
+      4) menu_otros;;
+      *) err "grupo desconocido: $grupo";;
     esac
-    while true; do
-      printf '\n=== %s ===\n' "$titulo"
-      for ((i=0; i<${#nombres[@]}; i++)); do printf '  %d) %s\n' "$((i+1))" "${nombres[$i]}"; done
-      printf '  0) Volver\n'
-      opcion=$(preguntar 'Auditoría' 0)
-      [ "$opcion" = 0 ] && break
-      if [[ "$opcion" =~ ^[1-9][0-9]*$ ]] && [ "$opcion" -le "${#ids[@]}" ]; then
-        OP_GUIA=${ids[$((opcion-1))]}
-        return 0
-      fi
-      err "opción de menú desconocida: $opcion"
-    done
   done
 }
 
@@ -1104,7 +1391,7 @@ guia(){
   # Requiere que el llamador ya haya fijado OP_GUIA (vía seleccionar_objetivo).
   local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27)
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28)
       guia_extra "$op"
       return 0;;
   esac
@@ -1139,13 +1426,13 @@ guia_extra(){
     6|7)
       if [ "$opcion" = 6 ]; then
         tipo=wifi-wps-pin
-        parametros+=(--interfaz "$(preguntar 'Interfaz ya en modo monitor' wlan0mon)")
+        parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor')")
       else
         tipo=wifi-pmkid
         parametros+=(--interfaz "$(preguntar 'Interfaz WiFi dedicada' wlan0)")
       fi
-      parametros+=(--bssid "$(preguntar 'BSSID del AP autorizado' '')")
-      parametros+=(--canal "$(preguntar 'Canal' '')")
+      parametros+=(--bssid "$(preguntar_bssid)")
+      parametros+=(--canal "$(preguntar_canal)")
       if [ "$opcion" = 6 ]; then
         parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos PIN (1-50)' 3)")
       else
@@ -1176,14 +1463,14 @@ guia_extra(){
       parametros+=("$(ruta_guiada "$(preguntar 'Ruta del módulo WASM' "$SCRIPT_DIR/ejemplos/extras/modulo_ficticio.wasm")")");;
     13)
       tipo=wifi-deauth
-      parametros+=(--interfaz "$(preguntar 'Interfaz ya en modo monitor' wlan0mon)")
-      parametros+=(--bssid "$(preguntar 'BSSID del AP autorizado' '')")
+      parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor')")
+      parametros+=(--bssid "$(preguntar_bssid)")
       valor=$(preguntar 'MAC del cliente (vacío = todos)' '')
       [ -n "$valor" ] && parametros+=(--cliente "$valor")
       parametros+=(--golpes "$(preguntar 'Desautenticaciones a enviar (1-200)' 10)");;
     14)
       tipo=wifi-wps-scan
-      parametros+=(--interfaz "$(preguntar 'Interfaz ya en modo monitor' wlan0mon)")
+      parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor')")
       valor=$(preguntar 'Canal (vacío = barrido)' '')
       [ -n "$valor" ] && parametros+=(--canal "$valor")
       parametros+=(--segundos "$(preguntar 'Segundos de observación (10-1200)' 20)");;
@@ -1220,19 +1507,20 @@ guia_extra(){
       parametros+=(--segundos "$(preguntar 'Duración del envenenamiento en segundos (10-3600)' 60)");;
     19)
       tipo=captura-wifi
-      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi' wlan0)")
-      parametros+=(--ssid "$(preguntar 'SSID de la red autorizada' '')")
-      parametros+=(--minutos "$(preguntar 'Minutos de captura (1-600)' 10)");;
+      parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz WiFi (monitor o gestionada)')")
+      parametros+=(--ssid "$(preguntar_ssid)")
+      parametros+=(--minutos "$(preguntar 'Minutos de captura (1-600)' 10)")
+      parametros+=(--mantener-monitor);;
     20)
       tipo=captura-wps
-      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi' wlan0)")
-      parametros+=(--bssid "$(preguntar 'BSSID del AP autorizado' '')")
-      parametros+=(--canal "$(preguntar 'Canal' '')");;
+      parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz WiFi (monitor o gestionada)')")
+      parametros+=(--bssid "$(preguntar_bssid)")
+      parametros+=(--canal "$(preguntar_canal)");;
     21)
       tipo=reaver-largo
-      parametros+=(--interfaz "$(preguntar 'Interfaz ya en modo monitor' wlan0mon)")
-      parametros+=(--bssid "$(preguntar 'BSSID del AP autorizado' '')")
-      parametros+=(--canal "$(preguntar 'Canal' '')")
+      parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor')")
+      parametros+=(--bssid "$(preguntar_bssid)")
+      parametros+=(--canal "$(preguntar_canal)")
       parametros+=(--intentos-ronda "$(preguntar 'PINs por ronda' 10)")
       parametros+=(--retardo "$(preguntar 'Segundos entre PINs' 15)");;
     22)
@@ -1249,6 +1537,10 @@ guia_extra(){
           parametros+=("$(ruta_guiada "$(preguntar 'Lista semilla' "$SCRIPT_DIR/ejemplos/semillas_ficticias.txt")")");;
         *) err "utilidad desconocida"; exit 2;;
       esac;;
+    28)
+      tipo=wifi-wpsplinter
+      parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor')")
+      parametros+=(--ssid "$(preguntar_ssid)");;
     25)
       tipo=wifi-monitor
       python3 "$SCRIPT_DIR/extras_wifi.py" wifi-monitor --listar
@@ -1439,7 +1731,8 @@ despachar_extra(){
         demo) target=(python3 "$SCRIPT_DIR/demo_controles.py");;
         test) target=(python3 -m unittest -v test_kit test_extras
                        test_extras_web test_wifi_capture test_wps_capture
-                       test_wifi_monitor test_oui_lookup test_regresiones);;
+                       test_wifi_monitor test_escaneo_wpsplinter
+                       test_oui_lookup test_regresiones);;
       esac
       if [ "$seco" -eq 1 ]; then
         printf 'Plan: %s %s\n' "${target[*]}" "${sin_dry[*]}"
@@ -1462,7 +1755,7 @@ despachar_extra(){
   case "$tipo" in
     web-login|web-sqli|web-basic) modulo=extras_web.py;;
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
-    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor) modulo=extras_wifi.py;;
+    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter) modulo=extras_wifi.py;;
     mitm-arp) modulo=extras_mitm.py;;
     ssh-brute) modulo=extras_ssh.py;;
     ftp-brute) modulo=extras_ftp.py;;
@@ -1613,11 +1906,9 @@ main(){
     # Menú guiado: vuelve a mostrarse tras cada ronda. Sólo "0) Salir" en
     # seleccionar_objetivo termina el proceso (exit 0); todo lo demás ocurre
     # en un subshell para que ningún `exit` de la ronda cierre el menú.
-    while true; do
-      seleccionar_objetivo
-      ( ronda_guiada )
-      printf '\n'
-    done
+    cargar_objetivo
+    refrescar_monitor
+    seleccionar_objetivo
   fi
   ejecutar_archivo
 }

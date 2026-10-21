@@ -35,6 +35,7 @@ kit-auditoria-claves/
 ├── run_captura_wifi_wps.sh      observación WPS y captura breve de evidencia
 ├── run_reaver_largo.sh          ataque WPS PIN prolongado con reintentos
 ├── run_mascara_larga.sh         máscaras largas (10-12) reanudables con hashcat
+├── third_party/broadcom-wps/    fingerprinter WPSplinter (Quentin Kaiser, MIT)
 ├── extras_wifi.py               WPS PIN, PMKID, inyección deauth y escaneo WPS acotados
 ├── extras_mitm.py               envenenamiento ARP acotado con bettercap (red propia)
 ├── extras_archivos.py           ZipCrypto y permisos PDF
@@ -105,6 +106,9 @@ sudo apt-get install -y p7zip-full python3 curl tar john hashcat \
   el script avisa y usa john (más lento).
 - **Captura WiFi:** `aircrack-ng`, `iw`, `hcxtools` y un adaptador compatible con
   modo monitor; la captura requiere `sudo`. `--dry-run` sólo necesita Bash.
+- **WPSplinter:** el modo `wifi-wpsplinter` necesita la librería Python `scapy`
+  instalada **para root**: `sudo python3 -m pip install --break-system-packages
+  scapy` (el `--user` del usuario normal no lo ve root).
 - **Observación WPS:** `reaver` aporta `wash`, que lee los anuncios WPS sin probar
   PIN. El script WPS requiere además `aircrack-ng`, `iw` y modo monitor. Si `wash`
   está instalado en `~/.local/bin/wash`, el script lo encuentra también al usar
@@ -149,6 +153,23 @@ El menú padre agrupa todas las opciones en **1) Auditoría de ficheros**,
 permite volver con `0`; en el menú padre, `0` termina la sesión. Ficheros incluye
 Office, hashes, ZipCrypto, permisos PDF y máscaras; Otros incluye SSH,
 credenciales, WASM, MITM y utilidades (demo, variantes y tests).
+
+Dentro de **Auditoría WiFi** hay cuatro bloques: **Tarjeta de red** (listar
+interfaces, activar/desactivar modo monitor), **Escaneo de objetivos**,
+**Ataque WPA** (analizar captura, captura dirigida, PMKID, desautenticación) y
+**Ataque WPS** (escaneo pasivo, evidencia, PIN acotado, PIN prolongado y
+huella WPSplinter). Tras cada operación se vuelve al submenú anterior, no al
+menú principal.
+
+**Objetivo en memoria.** `Escaneo de objetivos → Escanear y elegir` barre el
+entorno, numera las redes por señal y deja elegido un objetivo (ESSID, BSSID,
+canal) que se recuerda durante toda la sesión (y a través del fichero
+`~/.local/state/kit-auditoria-claves/objetivo.env`). Cualquier prompt de
+BSSID/SSID/canal acepta ese objetivo con sólo pulsar Enter, y la palabra
+`escanear` en cualquier prompt de BSSID/SSID lanza el escaneo en ese momento y
+devuelve al mismo punto. **El modo monitor ya no se desactiva solo** tras los
+escaneos ni tras las capturas dirigidas (`--mantener-monitor`): sólo la
+opción `Tarjeta de red → Desactivar modo monitor` lo quita y reconecta WiFi.
 Los modos adicionales solicitan sus parámetros y proponen **plan** como acción
 predeterminada, sin enviar
 intentos ni capturar tráfico. Elige **prueba** para ejecutarlo con los límites
@@ -171,8 +192,8 @@ Por línea de comandos:
 `wifi`, `hash`, `externo` (formato no reconocido) y `auto` (por defecto).
 
 **Modos cortos (`--modo`):** alias de `--tipo` para los modos de ataque:
-`wps`, `wps-scan`, `pmkid`, `deauth`, `ssh`, `cred`, además de los nombres
-largos completos. `--modo` con número sigue siendo el modo de hashcat
+`wps`, `wps-scan`, `pmkid`, `deauth`, `wpsplinter`, `escanear`, `ssh`, `cred`,
+además de los nombres largos completos. `--modo` con número sigue siendo el modo de hashcat
 (`--modo 0` = MD5). `--tiempo N` es un atajo según el modo: segundos para
 `pmkid` y `wps-scan`, segundos de bkcrack para `zip-conocido` y minutos
 (equivalente a `--max-min`) para objetivos offline.
@@ -414,7 +435,9 @@ BSSID ni contraseñas reales. `--dry-run` valida el plan sin conectarse al objet
 | `wifi-pmkid` | captura dirigida con `hcxdumptool` y filtro PMKID | sólo algunos AP entregan PMKID; el análisis posterior usa formato `22000` |
 | `wifi-deauth` | `aireplay-ng -0` dirigido al BSSID (y cliente opcional) | desconecta a los clientes para forzar el 4-way handshake; interrumpe el servicio unos segundos |
 | `wifi-wps-scan` | `wash -a -j` pasivo 10–1200 s | lista APs con WPS, si anuncian bloqueo y fabricante/modelo (vía WPS o MAC); pasivo, no envía paquetes |
-| `wifi-monitor` | `ip`/`iw` sobre una interfaz propia | activa/desactiva modo monitor (equivalente a `airmon-ng`); `--listar` muestra interfaces y cuál es la de la ruta por defecto; niega activar sobre ésta salvo `--forzar` |
+| `wifi-monitor` | `airmon-ng` (o `ip`/`iw` si no está) sobre una interfaz propia | activa/desactiva modo monitor; `--listar` muestra interfaces y cuál es la de la ruta por defecto; niega activar sobre ésta salvo `--forzar`; al desactivar resucita NetworkManager y reconecta |
+| `wifi-escanear` | `airodump-ng` 5–1200 s y lista numerada por señal | deja el modo monitor activo y el objetivo (ESSID/BSSID/canal) en memoria; el menú lo reutiliza en todos los prompts |
+| `wifi-wpsplinter` | fingerprinter EAP de `third_party/broadcom-wps` (scapy) | clasifica el reensamblador WPS del AP (LIKELY_VULNERABLE/NOT/INCONCLUSIVE) sin explotarlo; requiere root, monitor y scapy |
 | `mitm-arp` | envenenamiento ARP con `bettercap` (10–3600 s) | redirige el tráfico del objetivo por esta máquina; interrumpe la LAN y es visible para sus usuarios |
 | `ssh-brute` | hasta 200 intentos de contraseña SSH con `sshpass` | un intento por candidato, `NumberOfPasswordPrompts=1`; se detiene si el servidor limita |
 | `ftp-brute` | hasta 200 intentos de contraseña FTP con `ftplib` | un intento por candidato; para ante 421 o error de conexión |
@@ -603,6 +626,39 @@ descubre al intentar el PIN. El script prolongado lo tolera (reintenta tras
 la espera), pero si el bucle de deauth persiste ronda tras ronda, el AP está
 efectivamente cerrado al método PIN y conviene pasar a PMKID/handshake.
 
+
+### WPSplinter: huella del monitor WPS de Broadcom (wifi-wpsplinter)
+
+Aviso publicado por Quentin Kaiser el 16-10-2026
+(*one parser, two bugs*): el reensamblador de fragmentos EAP del **WPS
+Monitor del firmware Broadcom** tiene un desbordamiento alcanzable por un
+atacante **sin clave** (ni siquiera hace falta WPS activado con PIN: basta
+que el AP anuncie WPS en las balizas). Afecta a un buen puñado de routers de
+operador —entre ellos los **Huawei Wi-Fi 6 de Movistar/MiFibra** con chip
+Broadcom— y puede acabar en ejecución remota de código en el AP. No hay CVE
+asignada todavía y el parche depende del fabricante.
+
+El kit integra el *fingerprinter* oficial del autor (`third_party/broadcom-wps`,
+MIT): envía EAP fragmentados benignos y clasifica el reensamblador del AP.
+**No explota nada ni tumba el router**: es una prueba de exposición acotada.
+
+```bash
+# plan sin permisos
+./auditor_generico.sh --modo wpsplinter --interfaz wlan0mon --ssid MiRed --dry-run
+# huella real (root, interfaz en modo monitor, librería scapy)
+sudo ./auditor_generico.sh --modo wpsplinter --interfaz wlan0mon --ssid MiRed
+```
+
+Requisitos: `scapy` instalada **para root** (`sudo python3 -m pip install
+--break-system-packages scapy`; ojo: el `--user` de tu usuario no lo ve
+root) y la interfaz en modo monitor. Las evidencias (pcap completo +
+`result.json`) se guardan en `~/capturas_wifi/wpsplinter/`. Veredictos:
+`LIKELY_VULNERABLE` (reensamblador tipo Broadcom), `LIKELY_NOT_VULNERABLE`
+(comportamiento hostapd) o `INCONCLUSIVE`. El escaneo pasivo `wifi-wps-scan`
+ya avisaba por OUI cuando el fabricante figuraba en la lista pública; esta
+prueba es la comprobación activa.
+
+Resultado en la red propia (MiRouter MiFibra, Huawei/Broadcom): PENDIENTE_RESULTADO
 
 ### Man in the middle (mitm-arp)
 
@@ -795,7 +851,8 @@ for script in auditor_generico.sh wordlists/descargar_wordlists.sh rainbowcrack/
   run_captura_wifi.sh run_captura_wifi_wps.sh run_reaver_largo.sh run_mascara_larga.sh; do
   bash -n "$script" || break
 done
-python3 -m unittest -v test_kit test_wifi_capture test_wps_capture test_extras test_regresiones
+python3 -m unittest -v test_kit test_wifi_capture test_wps_capture test_wifi_monitor \
+  test_escaneo_wpsplinter test_oui_lookup test_extras test_regresiones
 # test_extras_web abre un socket local y se ejecuta donde estén permitidos:
 python3 -m unittest -v test_extras_web
 python3 demo_controles.py

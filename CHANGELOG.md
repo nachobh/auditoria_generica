@@ -6,6 +6,21 @@ versionado según [SemVer](https://semver.org/lang/es/).
 ## [Unreleased]
 
 ### Añadido
+- Menú WiFi reorganizado en cuatro bloques (Tarjeta de red, Escaneo de
+  objetivos, Ataque WPA, Ataque WPS) y navegación anidada: cada operación
+  devuelve al submenú desde el que se lanzó, no al menú principal.
+- Objetivo en memoria: `wifi-escanear` (alias `--modo escanear`) barre el
+  entorno y deja elegido ESSID/BSSID/canal; los prompts de BSSID/SSID/canal
+  reutilizan el objetivo con Enter y aceptan `escanear` para elegirlo en el
+  momento. El objetivo persiste en `~/.local/state/kit-auditoria-claves/`.
+- El modo monitor ya no se desactiva solo tras escaneos ni capturas
+  (`--mantener-monitor` en run_captura_wifi.sh); sólo la opción del menú
+  "Desactivar modo monitor" lo quita, y ahora también resucita
+  NetworkManager y reconecta la interfaz base tras el `airmon-ng check kill`.
+- Nuevo modo `wifi-wpsplinter` (alias `--modo wpsplinter`): huella activa del
+  desbordamiento del monitor WPS de Broadcom (Quentin Kaiser, oct-2026)
+  usando el fingerprinter oficial (third_party/broadcom-wps, MIT, scapy).
+  Veredicto LIKELY_VULNERABLE/NOT/INCONCLUSIVE con evidencias pcap+JSON.
 - El menú guiado (sin argumentos) ya no termina el script al acabar una
   auditoría: vuelve a mostrar el menú principal tras cada ronda (fichero o
   modo extra) y sólo sale de verdad cuando se elige "0) Salir" en el menú

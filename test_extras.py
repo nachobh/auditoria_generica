@@ -16,16 +16,20 @@ from extras_web import ruta_lista
 
 BASE = Path(__file__).with_name("ejemplos") / "extras"
 AUDITOR = Path(__file__).with_name("auditor_generico.sh")
-MENU = {1: (1, 1), 2: (1, 2), 4: (1, 3), 5: (1, 4), 8: (1, 5),
-        9: (1, 6), 22: (1, 7), 3: (2, 1), 19: (2, 2), 14: (2, 3),
-        20: (2, 4), 6: (2, 5), 7: (2, 6), 13: (2, 7), 21: (2, 8),
+# navegación del menú anidado: grupo, y para WiFi también bloque y item
+MENU = {1: (1, 1), 2: (1, 2), 4: (1, 3), 5: (1, 4), 8: (1, 5), 9: (1, 6),
+        22: (1, 7),
+        25: (2, 1, 1), 26: (2, 1, 2), 27: (2, 1, 3),
+        3: (2, 3, 1), 19: (2, 3, 2), 7: (2, 3, 3), 13: (2, 3, 4),
+        14: (2, 4, 1), 20: (2, 4, 2), 6: (2, 4, 3), 21: (2, 4, 4),
+        28: (2, 4, 5),
         10: (3, 1), 17: (3, 2), 11: (3, 3), 15: (4, 1), 24: (4, 2),
         16: (4, 3), 12: (4, 4), 18: (4, 5), 23: (4, 6)}
 
 
 def entrada_menu(opcion, parametros):
-    grupo, subopcion = MENU[opcion]
-    return f"{grupo}\n{subopcion}\n{parametros}"
+    ruta = MENU[opcion]
+    return "".join(f"{paso}\n" for paso in ruta) + parametros
 
 
 class ExtraTests(unittest.TestCase):
@@ -302,7 +306,7 @@ class ExtraTests(unittest.TestCase):
                           proceso.stdout)
 
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
-        for opcion in range(6, 25):
+        for opcion in list(range(6, 25)) + [28]:
             with self.subTest(opcion=opcion):
                 if opcion in (6, 7):
                     entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
@@ -331,6 +335,8 @@ class ExtraTests(unittest.TestCase):
                                 f"{Path(__file__).with_name('README.md')}\n22000\nplan\n")
                 elif opcion == 23:
                     entradas = f"{opcion}\ndemo\nplan\n"
+                elif opcion == 28:
+                    entradas = f"{opcion}\nwlan0mon\nRed Ficticia\nplan\n"
                 else:
                     entradas = f"{opcion}\n" + "\n" * 6
                 entradas = entrada_menu(opcion, entradas.split("\n", 1)[1])
