@@ -170,7 +170,17 @@ interfaces, activar/desactivar modo monitor), **Escaneo de objetivos**,
 PIN prolongado, huella WPSplinter, provocación acotada y triage YARA de
 firmware) y **Otros ataques** (WEP, WPA3-SAE, evil twin con conteo de
 asociaciones, detección 802.1X, comprobación KRACK/FragAttacks del cliente,
-PINes por defecto de fabricante, descubrimiento BLE y comprobación SDR).
+PINes por defecto de fabricante, descubrimiento BLE y comprobación SDR; y
+desde v1.5.0, **evil twin capturamanos** (`wifi-evil-capture`): clona el
+ESSID *y el BSSID* del objetivo con WPA2-PSK dummy, desautentica a sus
+clientes y cosecha los handshakes de reintento en un VIF monitor abierto en
+el mismo phy mientras el clon emite.
+
+**Captura → crack en el sitio:** en el menú, cuando una captura produce un
+artefacto crackable (PMKID, WPA3/SAE o handshakes del evil twin capturamanos)
+el auditor ofrece crackearlo al instante con el motor offline; ya no hace
+falta volver a navegar hasta «Analizar captura». Por CLI el flujo sigue
+siendo `--tipo wifi <archivo>` con el nivel que quieras.
 
 El bloque **Otros ataques** cubre las familias del espectro inalámbrico que
 un pentester encuentra además del WPA2/WPS doméstico. Cada una es acotada y
@@ -472,6 +482,7 @@ BSSID ni contraseñas reales. `--dry-run` valida el plan sin conectarse al objet
 | `wifi-wep` | captura de IVs (airodump) + crack (aircrack-ng -a 1) | red legada WEP; informe completo en el directorio de capturas |
 | `wifi-wpa3` | hcxdumptool captura SAE/EAPOL + hcxpcapngtool | produce `.22000` listo para el flujo `--tipo wifi`; informa si vio SAE |
 | `wifi-evil-twin` | clon abierto con hostapd+dnsmasq en la interfaz gestionada | cuenta qué dispositivos se asocian solos (exposición KARMA/evil twin); corta el WiFi de la máquina durante la prueba |
+| `wifi-evil-capture` | clona ESSID+**BSSID** con WPA2-PSK dummy, deauth con aireplay y captura en un VIF monitor simultáneo | cosecha los handshakes de reintento de los clientes → `.22000`; al terminar ofrece crackear en el sitio |
 | `wifi-enterprise` | barrido airodump filtrando AUTH=MGT | detecta APs 802.1X y guía el ataque eaphammer (hashcat -m 5500); no lo automatiza |
 | `wifi-krack` | versiones locales de wpa_supplicant/hostapd vs 2.7 | comprobación pasiva lado cliente de KRACK/FragAttacks; la prueba activa ataca clientes y es fuera de ámbito |
 | `wps-pins` | diccionario `wordlists/wps_pins_fabricante.txt` con Reaver | PINes por defecto de fabricante, acotado por `--limite-intentos` |

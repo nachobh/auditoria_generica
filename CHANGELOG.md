@@ -5,6 +5,19 @@ versionado según [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-10-21
+
+### Añadido
+- `wifi-evil-capture` (alias `--modo evil-capture`, menú Otros→4): evil twin
+  capturamanos — escucha los clientes del AP, clona ESSID y BSSID exactos con
+  WPA2-PSK dummy (hostapd `macaddr=`/`bssid=`), desautentica con aireplay
+  desde un VIF monitor creado en el mismo phy y captura los handshakes de
+  reintento convirtiéndolos a 22000. Requiere AP+monitor simultáneos; si el
+  chip no los soporta, error honesto.
+- Encadenamiento captura→crack en el menú: pmkid, wpa3 y evil-capture
+  imprimen `ARTEFACTO=<ruta>` y el despacho guiado ofrece crackear con el
+  motor offline sin volver a navegar el menú.
+
 ## [1.4.0] — 2026-10-21
 
 ### Añadido

