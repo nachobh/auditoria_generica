@@ -951,6 +951,36 @@ Sólo el hash `md5`, `sha1` y `lm` están soportados por esta versión. El plan 
 auditor añade el trabajo `n5_rainbow_tablas` sólo si hay tablas `.rt` y el hash es
 MD5/SHA1 crudo.
 
+### Pruebas reales y comodidad (v1.8.0)
+
+- **PHP**: `--modo php` ya no se esconde tras un checklist si la versión
+  está oculta: ejecuta sondas activas — descargas indiscretas
+  (`index.php~/.bak/.old`, `composer.json`, `.env`), phpinfo, LFI
+  `php://filter`, **sonda de fuga entre peticiones** (CVE-2026-109619:
+  petición marcada + 20 en la misma conexión; si la marca reaparece,
+  hay estado rancio) y **sonda OOM** (CVE-2026-109618: POST de 16 MB +
+  GET inmediato; 5xx = sospecha, 413 = ni llega a PHP). El checklist va
+  al final como referencia. `--sin-oom` omite el POST grande.
+- **Evil twin capturamanos**: 12 s de airodump ANTES del deauth para
+  ver quién está asociado de verdad; deauth dirigido por cliente y
+  aviso claro si el AP real no tiene nadie conectado.
+- **MAC** (`--modo mac`, Tarjeta de red → 5): randomizar (`--mac
+  random`), fijar (`--mac AA:BB:...`) o restaurar la de fábrica
+  (`--restaurar`). Probado: random → internet sigue → restaurar.
+- **Escaneo vivo** (`--modo vivo`, Escaneo → 3): `watch --color -d` +
+  `nmcli device wifi list --rescan yes` cada 5 s, sin modo monitor;
+  cae al escaneo clásico con aviso si faltan herramientas o no hay
+  terminal.
+- **Interfaz con `activar`**: donde se pide una interfaz en monitor,
+  responde `activar` y la pone ahora. Y todo es numerado: `1` = plan,
+  `2` = prueba, `1..N` = interfaz de la lista (las palabras siguen
+  sirviendo).
+- **KRACK, aclarado**: ataca al supplicant del CLIENTE que se conecta;
+  comprobar tu propia máquina solo dice si tú estás parcheado. Para la
+  prueba activa: emite un AP con `wifi-evil-twin` y conecta a él el
+  dispositivo objetivo (móvil/tablet antiguos); el parche que importa
+  es el del cliente atacado.
+
 ### Reinicio de la interfaz (v1.7.0)
 
 En **WiFi · Tarjeta de red → 4) Reiniciar/resetear interfaz**

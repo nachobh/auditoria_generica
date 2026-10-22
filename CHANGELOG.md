@@ -46,6 +46,49 @@ versionado según [SemVer](https://semver.org/lang/es/).
 - 80/80 pruebas. Reset real sobre wlp195s0: link up, NM 100 (connected) e
   internet 200 tras el ciclo.
 
+## [1.8.0] - 2026-10-22
+### Añadido
+- **Auditoría PHP con pruebas reales** (`extras_php.py`): la versión
+  oculta ya no manda al checklist; siempre se ejecutan sondas activas —
+  descargas indiscretas (`index.php~/.bak/.old`, `composer.json`, `.env`,
+  `phpunit.xml`, exigiendo contenido característico para no tragar
+  páginas de error), phpinfo(), LFI `php://filter`, **sonda de fuga entre
+  peticiones** (CVE-2026-109619: petición marcada + 20 en la misma
+  conexión; la marca reapareciendo = estado rancio) y **sonda OOM**
+  (CVE-2026-109618: POST de 16 MB + GET inmediato en la misma conexión;
+  5xx = sospecha; 413 = límite del servidor web, inconcluyente; se
+  omite con `--sin-oom`). El checklist queda como referencia al final.
+- **Evil twin capturamanos busca clientes de verdad**: antes del deauth
+  hay 12 s de airodump en el canal; lista los asociados al BSSID y hace
+  deauth DIRIGIDO por cliente (`-c`), con aviso explícito si no hay
+  nadie conectado (el broadcast solo era un último recurso).
+- **`wifi-mac`** (`--modo mac`, Tarjeta de red → 5): cambia/randomiza la
+  MAC (`--mac AA:..|random`, localmente administrada) o la restaura
+  (`--restaurar`, vía `ethtool -P` o el `permaddr` de `ip link` si
+  ethtool no está). NM suelto + down/up + reconexión.
+- **Escaneo vivo por emanación** (`--modo vivo`, Escaneo → 3):
+  `watch -n 5 --color -d 'nmcli --colors yes -f IN-USE,NAME,SSID,…
+  device wifi list --rescan yes'`; aviso y caída al escaneo clásico si
+  faltan `watch`/`nmcli`, hay monitor activo o no hay terminal.
+- **Prompt de interfaz con opción `activar`**: donde se pide una interfaz
+  en modo monitor, responder `activar` la pone ahora (wifi-monitor
+  --forzar) y devuelve la monitora resultante.
+- **Prompts numerados**: la acción es `1) plan / 2) prueba` (las palabras
+  siguen valiendo) y las interfaces se listan numeradas (se responde el
+  número; el nombre también vale).
+### Corregido
+- `preguntar_accion` toleraba mal el EOF: `preguntar` imprime el defecto
+  y devuelve 141; abortaba el subshell del menú y el modo moría sin
+  imprimir el plan.
+- `wifi-krack` explica por fin el objetivo: KRACK ataca al SUPPLICANT
+  del cliente que se conecta; mirarse a sí mismo solo dice si TU
+  portátil está parcheado (lo está). La prueba activa exige emitir un AP
+  propio y que se conecte el dispositivo objetivo.
+### Verificado
+- 82/82 pruebas. Sondas PHP contra servidor real 8.4.27: composer.json,
+  phpinfo y LFI detectados; fuga y OOM honestamente inconcluyentes/limpias.
+  MAC: random → internet 200 → restaurada (permaddr) → NM 100 connected.
+
 ## [Unreleased]
 
 ## [1.5.0] — 2026-10-21

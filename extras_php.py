@@ -24,8 +24,11 @@ Fuentes (oct-2026):
 
 import argparse
 import re
+import secrets
 import subprocess
+import tempfile
 import urllib.parse
+from pathlib import Path
 
 # versiones con fix de CVE-2026-109618/109619 por rama
 PARCHES = {"8.5": (8, 5, 12), "8.4": (8, 4, 27), "8.3": (8, 3, 36),
@@ -34,6 +37,9 @@ RUTA_FILTRO = ("php://filter/convert.base64-encode/resource=index.php")
 PHPINFO_RUTAS = ("/phpinfo.php", "/info.php", "/pi.php", "/p.php",
                  "/test.php", "/php_information.php")
 PARAMETROS_LFI = ("file", "page", "include", "path", "doc")
+DESCARGO_RUTAS = ("/index.php~", "/index.php.bak", "/index.php.old",
+                  "/.php.swp", "/phpunit.xml", "/composer.json", "/.env")
+SONDEO_FUGA = 20  # peticiones por conexión para cazar estado rancio
 VERSION = re.compile(r"PHP/?(\d+\.\d+(?:\.\d+)?)", re.I)
 
 
@@ -79,36 +85,120 @@ def _veredicto_cve(version):
             "del advisory; trátalo como sin soporte")
 
 
-def php_audit(url, segundos=10, seco=False):
+def _sondeo_descargo(base, segundos):
+    """Archivos que delatan o exponen una app PHP (backup de fuente,
+    composer.json, .env). Se exige contenido característico: una página
+    de error que reenvía a index.php no cuenta. Devuelve [(ruta, pista)]."""
+    hallazgos = []
+    for ruta in DESCARGO_RUTAS:
+        cuerpo = _curl(base + ruta, segundos, cuerpo_a_devolver=2000)
+        if not cuerpo:
+            continue
+        if "<?php" in cuerpo:
+            hallazgos.append((ruta, "código fuente al descubierto"))
+        elif ruta == "/composer.json" and ('"require"' in cuerpo
+                                           or '"php"' in cuerpo):
+            hallazgos.append((ruta, "app PHP confirmada"))
+        elif ruta == "/phpunit.xml" and "<phpunit" in cuerpo:
+            hallazgos.append((ruta, "entorno de desarrollo a la vista"))
+        elif ruta == "/.env" and re.search(
+                r"^(?:[A-Z][A-Z0-9_]{2,})=\S", cuerpo, re.M):
+            hallazgos.append((ruta, "credenciales expuestas"))
+    return hallazgos
+
+
+def _sondeo_fuga(raiz, segundos):
+    """Sonda de caja negra del CVE-2026-109619 (estado rancio entre
+    peticiones): marca una petición (ruta 404 que las páginas de error
+    suelen reflejar) y hace 20 peticiones normales sobre la MISMA
+    conexión; si la marca aparece más de una vez en las respuestas,
+    datos de una petición anterior contaminaron a las siguientes.
+    Devuelve True/False/None (None = sin reflejo, inconcluyente)."""
+    marcador = "kit" + secrets.token_hex(6)
+    primera = _curl(f"{raiz}/{marcador}.php", segundos)
+    if marcador not in primera:
+        return None  # el servidor no refleja la ruta: sonda sin señal
+    orden = ["curl", "-sk", "--max-time", str(segundos), f"{raiz}/{marcador}.php"]
+    for _ in range(SONDEO_FUGA):
+        orden += ["--next", "-sk", "--max-time", str(segundos), f"{raiz}/"]
+    try:
+        proceso = subprocess.run(orden, capture_output=True, text=True,
+                                 timeout=segundos * (SONDEO_FUGA + 1),
+                                 check=False)
+    except subprocess.TimeoutExpired:
+        return None
+    return proceso.stdout.count(marcador) > 1
+
+
+def _sondeo_oom(url, segundos):
+    """Sonda del CVE-2026-109618 (OOM a medio inicializar): POST de 16 MB
+    para forzar la gestión de memoria y GET inmediato en la misma
+    conexión. 5xx tras el POST = sospecha; 413 = el límite está en el
+    servidor web, no en PHP (inconcluyente)."""
+    cuerpo = Path(tempfile.mkstemp(prefix="kitoom")[1])
+    try:
+        cuerpo.write_bytes(b"A" * (16 * 1024 * 1024))
+        orden = ["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code} ",
+                 "--max-time", str(max(segundos, 30)), "-X", "POST",
+                 "--data-binary", f"@{cuerpo}", url,
+                 "--next", "-sk", "-o", "/dev/null", "-w", "%{http_code}",
+                 "--max-time", str(segundos), url]
+        try:
+            proceso = subprocess.run(orden, capture_output=True, text=True,
+                                     timeout=120, check=False)
+        except subprocess.TimeoutExpired:
+            return None
+    finally:
+        cuerpo.unlink(missing_ok=True)
+    codigos = proceso.stdout.split()
+    if len(codigos) != 2 or not all(c.isdigit() for c in codigos):
+        return None
+    post, get = (int(c) for c in codigos)
+    if post == 413 or get == 413:
+        return False
+    return post >= 500 or get >= 500
+
+
+def php_audit(url, segundos=10, seco=False, con_oom=True):
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("--url debe ser http(s)://host[/ruta]")
     base = f"{parsed.scheme}://{parsed.netloc}"
+    raiz = base + "/"
     if seco:
-        print(f"Plan: {1 + len(PHPINFO_RUTAS) + len(PARAMETROS_LFI)} GETs "
-              f"acotados contra {base} (huella de versión, phpinfo expuesto, "
-              "LFI php://filter) y veredicto CVE-2026-109618/109619")
+        print(f"Plan: ~{4 + len(PHPINFO_RUTAS) + len(PARAMETROS_LFI) + SONDEO_FUGA}"
+              f" GETs + 1 POST de 16 MB acotados contra {base}: huella de "
+              "versión, descargas indiscretas (~/.bak/.old/composer.json/"
+              ".env), phpinfo(), LFI php://filter, sonda de fuga entre "
+              "peticiones (CVE-2026-109619)"
+              + (" y sonda OOM (CVE-2026-109618)" if con_oom
+                 else " (OOM omitido con --sin-oom)")
+              + "; el checklist va al final como referencia")
         return 0
     hallazgos = 0
     cabeceras = _curl(url, segundos, cabeceras=True)
     version = _version_de(cabeceras)
-    php_visible = bool(version) or "PHPSESSID" in cabeceras
-    if not php_visible:
-        # sin cabeceras de PHP aún puede haber PHP detrás de proxy: sondeo
-        cuerpo = _curl(url, segundos)
-        php_visible = "PHPSESSID" in cuerpo or "phpinfo()" in cuerpo
+    cuerpo = _curl(url, segundos)
+    php_visible = bool(version) or "PHPSESSID" in cabeceras + cuerpo \
+        or "phpinfo()" in cuerpo
     version_texto = ("%d.%d.%d" % version) if version else "oculta"
     print(f"PHP detectado: {'sí' if php_visible else 'no visible'}; "
           f"versión: {version_texto}")
-    if not php_visible:
-        print("El objetivo no expone huellas de PHP: el bloque de "
-              "comprobaciones específicas se limita al checklist")
-        print(CHECKLIST)
-        return 1
-    veredicto, consejo = _veredicto_cve(version)
-    print(f"CVE-2026-109618/109619: {veredicto} — {consejo}")
-    if "VULNERABLE" in veredicto:
+    if version:
+        veredicto, consejo = _veredicto_cve(version)
+        print(f"CVE-2026-109618/109619: {veredicto} — {consejo}")
+        if "VULNERABLE" in veredicto:
+            hallazgos += 1
+    else:
+        print("CVE-2026-109618/109619: versión oculta — el rango 5.4–8.5.11 "
+              "es casi todo PHP vivo, así que se JUZGA POR SONDES activas, "
+              "no por la cabecera")
+    fugas = _sondeo_descargo(base, segundos)
+    for ruta, pista in fugas:
         hallazgos += 1
+        print(f"descarga indiscreta: {ruta} — {pista}")
+    if not fugas:
+        print("descargas indiscretas: ninguna de las 7 rutas típicas respondió")
     expuestos = []
     for ruta in PHPINFO_RUTAS:
         cuerpo = _curl(base + ruta, segundos)
@@ -134,6 +224,32 @@ def php_audit(url, segundos=10, seco=False):
     else:
         print("php://filter: ningún parámetro típico devolvió fuente "
               "base64 (no descarta LFI en parámetros no comunes)")
+    fuga = _sondeo_fuga(raiz, segundos)
+    if fuga is True:
+        hallazgos += 1
+        print("FUGA entre peticiones: la marca de una petición apareció en "
+              "respuestas posteriores — patrón compatible con "
+              "CVE-2026-109619 (estado rancio); repite la prueba para "
+              "confirmar antes de escalar")
+    elif fuga is False:
+        print("fuga entre peticiones: 20 peticiones en la misma conexión, "
+              "sin contaminación de la marca")
+    else:
+        print("fuga entre peticiones: INCONCLUYENTE (el servidor no refleja "
+              "la ruta en el 404; prueba contra un endpoint que refleje "
+              "parámetros)")
+    if con_oom:
+        oom = _sondeo_oom(url, segundos)
+        if oom is True:
+            hallazgos += 1
+            print("OOM: POST de 16 MB seguido de GET devolvió 5xx en la "
+                  "misma conexión — patrón compatible con CVE-2026-109618; "
+                  "repite y confirma")
+        elif oom is False:
+            print("OOM: sin 5xx tras el POST de 16 MB (o el límite saltó en "
+                  "el servidor web: 413)")
+        else:
+            print("OOM: INCONCLUYENTE (el POST no devolvió código)")
     print()
     print(CHECKLIST)
     return 0 if hallazgos else 1
@@ -186,6 +302,8 @@ def main():
     audit = sub.add_parser("php-audit")
     audit.add_argument("--url", required=True)
     audit.add_argument("--segundos", type=int, default=10)
+    audit.add_argument("--sin-oom", action="store_true",
+                       help="omite la sonda OOM (POST de 16 MB)")
     audit.add_argument("--dry-run", action="store_true")
     checklist = sub.add_parser("php-checklist")
     checklist.add_argument("--dry-run", action="store_true",
@@ -193,7 +311,8 @@ def main():
     args = parser.parse_args()
     try:
         if args.accion == "php-audit":
-            return php_audit(args.url, args.segundos, args.dry_run)
+            return php_audit(args.url, args.segundos, args.dry_run,
+                           not args.sin_oom)
         return php_checklist(args.dry_run)
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         parser.error(str(exc))

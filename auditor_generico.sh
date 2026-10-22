@@ -2,7 +2,7 @@
 set -uo pipefail
 export LC_ALL=C
 
-VERSION="1.7.0"
+VERSION="1.8.0"
 SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
@@ -106,6 +106,8 @@ alias_modo(){
     wps) printf 'wifi-wps-pin';;
     wps-scan) printf 'wifi-wps-scan';;
     monitor) printf 'wifi-monitor';;
+    mac) printf 'wifi-mac';;
+    vivo|escaneo-vivo) printf 'live-scan';;
     reset) printf 'wifi-reset';;
     pmkid) printf 'wifi-pmkid';;
     deauth) printf 'wifi-deauth';;
@@ -134,7 +136,7 @@ alias_modo(){
 
 es_modo_extra(){
   case "$(alias_modo "$1")" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-reset|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|php-audit|php-checklist|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-reset|wifi-mac|live-scan|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|php-audit|php-checklist|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
     captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test) return 0;;
     *) return 1;;
   esac
@@ -165,6 +167,10 @@ Tipos (--tipo):
                 fabricante/modelo vía WPS o MAC, aviso si coincide con
                 la lista pública de marcas citadas en WPSplinter)
   wifi-monitor  activa/desactiva modo monitor en una interfaz WiFi propia
+  wifi-mac      cambia/randomiza la MAC de la interfaz (--mac AA:..|random)
+                o la restaura de fábrica (--restaurar)
+  live-scan     escaneo vivo por emanación con watch+nmcli (sin monitor;
+                Ctrl-C para salir); cae al escaneo clásico si faltan
   wifi-reset    reinicia la interfaz WiFi (link down/up + reconexión
                 NetworkManager); con --con-driver llega al rebind del driver
                 PCI, para tarjetas colgadas que no responden a un down/up
@@ -1284,10 +1290,80 @@ preguntar_canal(){
   done
 }
 
+preguntar_interfaz_wifi(){
+  # lista numerada de interfaces WiFi; se responde con el número
+  local -a ifaces=()
+  local i r linea def
+  while IFS= read -r linea; do
+    [ -n "$linea" ] && ifaces+=("$linea")
+  done < <(ls -d /sys/class/net/*/wireless 2>/dev/null \
+           | sed 's|/sys/class/net/||;s|/wireless||')
+  if [ "${#ifaces[@]}" -eq 0 ]; then
+    err "no hay ninguna interfaz WiFi en /sys/class/net"; return 2
+  fi
+  def=$(ip -o route show default 2>/dev/null \
+        | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
+  printf 'Interfaces WiFi:\n' >&2
+  for ((i=0; i<${#ifaces[@]}; i++)); do
+    local marca=""
+    [ "${ifaces[$i]}" = "$def" ] && marca="  ← ruta por defecto"
+    printf '  %d) %s%s\n' "$((i+1))" "${ifaces[$i]}" "$marca" >&2
+  done
+  r=$(preguntar "Interfaz (número o nombre)" "${OBJ_MON:-1}") || return 141
+  if [[ "$r" =~ ^[0-9]+$ ]] && [ "$r" -ge 1 ] && [ "$r" -le "${#ifaces[@]}" ]; then
+    printf '%s' "${ifaces[$((r-1))]}"
+  else
+    printf '%s' "$r"
+  fi
+}
+
+preguntar_accion(){
+  # 1) plan  2) prueba — se aceptan también las palabras por compatibilidad
+  local r
+  printf 'Acción:\n  1) plan (ensayo: valida sin tocar el objetivo)\n  2) prueba (ejecuta de verdad)\n' >&2
+  r=$(preguntar 'Acción' 1)
+  # en EOF preguntar imprime el defecto (1) y devuelve 141: se tolera,
+  # el plan es el camino seguro
+  case "$r" in
+    1|plan) printf plan;;
+    2|prueba) printf prueba;;
+    *) err "acción desconocida: $r"; return 2;;
+  esac
+}
+
+activar_monitor_aqui(){
+  # pone en modo monitor la interfaz WiFi por defecto y devuelve la monitora
+  local base
+  base=$(ip -o route show default 2>/dev/null \
+         | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
+  if [ -z "$base" ] || [ ! -e "/sys/class/net/$base/wireless" ]; then
+    base=$(ls -d /sys/class/net/*/wireless 2>/dev/null \
+           | sed 's|/sys/class/net/||;s|/wireless||' | head -1)
+  fi
+  if [ -z "$base" ]; then
+    err "no hay interfaz WiFi que activar"; return 2
+  fi
+  if ! python3 "$SCRIPT_DIR/extras_wifi.py" wifi-monitor --interfaz "$base" \
+       --accion activar --forzar; then
+    err "no se pudo activar el modo monitor (¿ejecutado sin sudo?)"
+    return 2
+  fi
+  refrescar_monitor
+  printf '%s' "${OBJ_MON:-$base}"
+}
+
 preguntar_interfaz_mon(){
   local r
   refrescar_monitor
-  r=$(preguntar "$1" "${OBJ_MON:-wlan0mon}")
+  if [ -n "$OBJ_MON" ]; then
+    r=$(preguntar "$1 (o «activar» para volver a ponerla)" "$OBJ_MON")
+  else
+    r=$(preguntar "$1 — sin monitor activo; «activar» la pone ahora" wlan0mon)
+  fi
+  if [ "$r" = activar ]; then
+    activar_monitor_aqui
+    return
+  fi
   printf '%s' "$r"
 }
 
@@ -1307,7 +1383,7 @@ menu_tarjeta_wifi(){
   local opcion
   while true; do
     printf '\n=== WiFi · Tarjeta de red ===\n'
-    printf '  1) Listar interfaces WiFi y su modo\n  2) Activar modo monitor\n  3) Desactivar modo monitor\n  4) Reiniciar/resetear interfaz (down/up + NM; opcional rebind de driver)\n  0) Volver\n'
+    printf '  1) Listar interfaces WiFi y su modo\n  2) Activar modo monitor\n  3) Desactivar modo monitor\n  4) Reiniciar/resetear interfaz (down/up + NM; opcional rebind de driver)\n  5) Cambiar/randomizar/restaurar la MAC\n  0) Volver\n'
     opcion=$(preguntar 'Opción' 0)
     case "$opcion" in
       0) return 0;;
@@ -1315,6 +1391,7 @@ menu_tarjeta_wifi(){
       2) ejecutar_ronda 26;;
       3) ejecutar_ronda 27;;
       4) ejecutar_ronda 42;;
+      5) ejecutar_ronda 44;;
       *) err "opción desconocida: $opcion";;
     esac
   done
@@ -1366,13 +1443,14 @@ menu_escaneo(){
   local opcion
   while true; do
     printf '\n=== WiFi · Escaneo de objetivos ===\n'
-    printf '  1) Escanear y elegir objetivo (deja el monitor activo)\n  2) Ver objetivo en memoria\n  0) Volver\n'
+    printf '  1) Escanear y elegir objetivo (deja el monitor activo)\n  2) Ver objetivo en memoria\n  3) Escaneo vivo por emanación (watch + nmcli, sin monitor; Ctrl-C sale)\n  0) Volver\n'
     mostrar_objetivo
     opcion=$(preguntar 'Opción' 0)
     case "$opcion" in
       0) return 0;;
       1) escanear_objetivo;;
       2) mostrar_objetivo;;
+      3) ejecutar_ronda 43;;
       *) err "opción desconocida: $opcion";;
     esac
   done
@@ -1513,7 +1591,7 @@ guia(){
   # Requiere que el llamador ya haya fijado OP_GUIA (vía seleccionar_objetivo).
   local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42)
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44)
       guia_extra "$op"
       return 0;;
   esac
@@ -1715,11 +1793,21 @@ guia_extra(){
       tipo=sdr-check;;
     42)
       tipo=wifi-reset
-      python3 "$SCRIPT_DIR/extras_wifi.py" wifi-monitor --listar
-      interfaz_reset=$(preguntar 'Interfaz WiFi a reiniciar (vacío = la por defecto)' '')
+      interfaz_reset=$(preguntar_interfaz_wifi)
       [ -n "$interfaz_reset" ] && parametros+=(--interfaz "$interfaz_reset")
       confirmar '¿Rebind completo del driver PCI (tarjeta entera apaga y enciende)?' \
         && parametros+=(--con-driver);;
+    44)
+      tipo=wifi-mac
+      parametros+=(--interfaz "$(preguntar_interfaz_wifi)")
+      mac_nueva=$(preguntar 'MAC nueva (vacía = aleatoria, «original» = la de fábrica)' '')
+      case "$mac_nueva" in
+        original|restaurar) parametros+=(--restaurar);;
+        '') ;;
+        *) parametros+=(--mac "$mac_nueva");;
+      esac;;
+    43)
+      tipo=live-scan;;
     40)
       tipo=php-audit
       parametros+=(--url "$(preguntar 'URL objetivo (http(s)://…)' 'http://127.0.0.1/')");;
@@ -1751,8 +1839,7 @@ guia_extra(){
       exit 0;;
     26|27)
       tipo=wifi-monitor
-      python3 "$SCRIPT_DIR/extras_wifi.py" wifi-monitor --listar
-      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi (de la lista de arriba)' '')")
+      parametros+=(--interfaz "$(preguntar_interfaz_wifi)")
       if [ "$opcion" = 26 ]; then
         parametros+=(--accion activar)
         if confirmar '¿Seguro? si es tu interfaz de internet/SSH se desconectará'; then
@@ -1765,7 +1852,7 @@ guia_extra(){
   if [ "$DRY" -eq 1 ]; then
     accion=plan
   else
-    accion=$(preguntar 'Acción (plan/prueba)' plan)
+    accion=$(preguntar_accion) || exit 2
   fi
   case "$accion" in
     plan) parametros+=(--dry-run);;
@@ -1917,6 +2004,29 @@ despachar_extra(){
     fi
   done
   tipo=$(alias_modo "$tipo")
+  if [ "$tipo" = live-scan ]; then
+    local seco=0
+    for arg in "${restantes[@]}"; do
+      [ "$arg" = --dry-run ] && seco=1
+    done
+    if ! command -v watch >/dev/null 2>&1 || ! command -v nmcli >/dev/null 2>&1; then
+      err "falta watch o nmcli: usa --tipo wifi-escanear (airodump, necesita monitor)"
+      exit 2
+    fi
+    if [ "$seco" -eq 1 ]; then
+      echo "Plan: watch -n 5 --color -d 'nmcli --colors yes -f IN-USE,NAME,SSID,BSSID,MODE,CHAN,FREQ,RATE,SIGNAL,BARS,SECURITY,DEVICE,ACTIVE device wifi list --rescan yes' (Ctrl-C para salir)"
+      exit 0
+    fi
+    if [ -n "$(monitor_activo)" ]; then
+      err "hay una interfaz en modo monitor: nmcli no ve redes así; desactívala primero o usa wifi-escanear"
+      exit 3
+    fi
+    if [ ! -t 1 ]; then
+      err "sin terminal interactiva para watch: usa --tipo wifi-escanear"
+      exit 2
+    fi
+    exec watch -n 5 --color -d 'nmcli --colors yes -f IN-USE,NAME,SSID,BSSID,MODE,CHAN,FREQ,RATE,SIGNAL,BARS,SECURITY,DEVICE,ACTIVE device wifi list --rescan yes'
+  fi
   case "$tipo" in
     captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test)
       # estos lanzadores no conocen --dry-run: se intercepta aquí
@@ -1958,7 +2068,7 @@ despachar_extra(){
   case "$tipo" in
     web-login|web-sqli|web-basic) modulo=extras_web.py;;
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
-    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-reset|wifi-escanear|wifi-wpsplinter|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins) modulo=extras_wifi.py;;
+    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-reset|wifi-mac|wifi-escanear|wifi-wpsplinter|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins) modulo=extras_wifi.py;;
     ble-recon|sdr-check) modulo=extras_rf.py;;
     php-audit|php-checklist) modulo=extras_php.py;;
     wpsplinter-probar) exec python3 "$SCRIPT_DIR/wpsplinter_probe.py" "${restantes[@]}";;

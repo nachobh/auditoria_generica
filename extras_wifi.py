@@ -7,6 +7,7 @@ from pathlib import Path
 import pwd
 import re
 import resource
+import secrets
 import shutil
 import sys
 import signal
@@ -647,6 +648,98 @@ def wifi_reset(interfaz=None, con_driver=False, seco=False):
     return 1
 
 
+MAC_RE = re.compile(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\Z")
+
+
+def wifi_mac(interfaz=None, mac=None, restaurar=False, seco=False):
+    """Cambia la MAC de la interfaz WiFi (spoof para privacidad o para
+    pruebas) o la restaura a la de fábrica (--restaurar, vía ethtool -P).
+    Con --mac random genera una localmente administrada (bit 0x02).
+    """
+    if interfaz and not IFACE.fullmatch(interfaz):
+        raise ValueError("interfaz inválida")
+    if not interfaz:
+        disponibles = _interfaces_wifi()
+        if not disponibles:
+            raise ValueError("no hay ninguna interfaz WiFi en /sys/class/net")
+        predeterminada = _interfaz_predeterminada()
+        interfaz = (predeterminada if predeterminada in disponibles
+                    else disponibles[0])
+    if _modo_interfaz(interfaz) == "monitor":
+        raise ValueError(f"'{interfaz}' está en modo monitor; primero "
+                         "wifi-monitor --accion desactivar")
+    if restaurar:
+        objetivo = "la permanente de fábrica (ethtool -P)"
+    elif mac in (None, "", "random"):
+        semilla = bytearray(secrets.token_bytes(6))
+        semilla[0] = (semilla[0] & 0xFC) | 0x02
+        objetivo = ":".join(f"{b:02x}" for b in semilla)
+    elif MAC_RE.match(mac):
+        objetivo = mac.lower()
+    else:
+        raise ValueError("--mac debe ser AA:BB:CC:DD:EE:FF, 'random' o "
+                         "usar --restaurar")
+    if seco:
+        print(f"Plan: fijar MAC de {interfaz} a {objetivo} "
+              "(NM suelto + link down + ip link set address + up + NM "
+              "reconecta)")
+        return 0
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo")
+    if restaurar:
+        objetivo = ""
+        ethtool = shutil.which("ethtool")
+        if ethtool:
+            salida = subprocess.run([ethtool, "-P", interfaz],
+                                    capture_output=True, text=True,
+                                    timeout=10, check=False)
+            objetivo = (salida.stdout.split(":")[-1].strip().lower()
+                        if salida.returncode == 0 else "")
+        if not MAC_RE.match(objetivo or ""):
+            # plan B: ip link ya imprime «permaddr» cuando el driver lo
+            # expone (ethtool puede no estar instalado)
+            salida = subprocess.run([shutil.which("ip") or "ip",
+                                     "link", "show", interfaz],
+                                    capture_output=True, text=True,
+                                    timeout=10, check=False)
+            desde = re.search(r"permaddr\s+([0-9a-f:]{17})", salida.stdout)
+            objetivo = desde.group(1) if desde else ""
+        if not MAC_RE.match(objetivo or ""):
+            raise ValueError("ni ethtool -P ni «permaddr» de ip link "
+                             "devolvieron la MAC permanente (¿interfaz "
+                             "virtual? prueba --mac explícita)")
+    ip = shutil.which("ip")
+    nmcli = shutil.which("nmcli")
+    actual = Path(f"/sys/class/net/{interfaz}/address").read_text().strip()
+    with open(os.devnull, "wb") as nada:
+        if nmcli:
+            subprocess.run([nmcli, "device", "set", interfaz, "managed",
+                            "off"], stdout=nada, stderr=nada, timeout=15,
+                           check=False)
+            time.sleep(2)  # NM debe soltar el nl80211 antes del down
+        subprocess.run([ip, "link", "set", interfaz, "down"], stdout=nada,
+                       stderr=nada, timeout=15, check=False)
+        cambio = subprocess.run([ip, "link", "set", interfaz, "address",
+                                 objetivo], stdout=nada, stderr=nada,
+                                timeout=15, check=False)
+        subprocess.run([ip, "link", "set", interfaz, "up"], stdout=nada,
+                       stderr=nada, timeout=15, check=False)
+        if nmcli:
+            subprocess.run([nmcli, "device", "set", interfaz, "managed",
+                            "on"], stdout=nada, stderr=nada, timeout=15,
+                           check=False)
+            subprocess.run([nmcli, "device", "connect", interfaz],
+                           stdout=nada, stderr=nada, timeout=20, check=False)
+    if cambio.returncode != 0:
+        raise ValueError(f"ip link set address falló (¿MAC rechazada por el "
+                         f"driver?) para {objetivo}")
+    print(f"MAC de {interfaz}: {actual} → {objetivo}")
+    print("NM reconecta con los perfiles guardados; si la red filtra por "
+          "MAC (Filtrado MAC del router), el cambio cortará la conexión "
+          "hasta que la añadas a la lista o restaures con --restaurar")
+    return 0
+
+
 def _ap_del_csv(csv_path):
     """APs del CSV de airodump: [(bssid, canal, essid, potencia)], sin duplicados."""
     from wifi_capture_utils import normalizar_mac
@@ -1085,6 +1178,14 @@ def krack(seco=False):
           "mantén las actualizaciones de Debian; la prueba activa (client-attack "
           "de KRACK, demo_*.py de FragAttacks) ataca a los CLIENTES, no al AP, y "
           "queda fuera del ámbito acotado del kit")
+    print("IMPORTANTE sobre el objetivo: KRACK se prueba CONTRA el supplicant "
+          "del dispositivo que se conecta. Comprobarte a ti mismo solo dice si "
+          "TU portátil está parcheado (y sí, lo estás: es el emisor y el "
+          "receptor a la vez). Para una prueba activa hay que elegir OTRO "
+          "objetivo: esta máquina emite un AP con hostapd (wifi-evil-twin) y "
+          "el dispositivo elegido (un móvil o tablet antiguos sin parchear) se "
+          "conecta a él; el parche que importa es el del cliente atacado, no "
+          "el del emisor")
     return 0 if saneados == len(objetivos) else 1
 
 
@@ -1131,6 +1232,19 @@ def wps_pins(interfaz, bssid, canal, limite=10, seco=False):
     finally:
         _ceder(carpeta)
 
+
+
+def _clientes_del_csv(csv_path, bssid):
+    """MACs de estaciones asociadas a bssid según el CSV de airodump."""
+    clientes = set()
+    if not Path(csv_path).is_file():
+        return clientes
+    for linea in Path(csv_path).read_text(errors="replace").splitlines():
+        campos = linea.split(",")
+        if len(campos) > 6 and campos[0].count(":") == 5 \
+                and campos[1].strip().upper() == bssid:
+            clientes.add(campos[0])
+    return clientes
 
 
 def evil_capture(interfaz, ssid, bssid, canal, segundos=90, seco=False):
@@ -1213,24 +1327,39 @@ def evil_capture(interfaz, ssid, bssid, canal, segundos=90, seco=False):
                 [airodump, "--bssid", bssid, "-c", str(canal), "-w", str(cap),
                  vif], stdout=nada, stderr=nada, preexec_fn=limitar_captura)
         try:
-            time.sleep(5)
+            time.sleep(12)  # ventana de descubrimiento: quien no esté
+            # asociado y visible en el CSV no va a reconectarse nunca
+            clientes = _clientes_del_csv(str(cap) + "-01.csv", bssid)
+            if clientes:
+                print(f"clientes asociados al AP real: {len(clientes)}: "
+                      + ", ".join(sorted(clientes)))
+            else:
+                print("AVISO: 0 clientes asociados tras 12 s de airodump en "
+                      "el canal: el deauth no capturará handshakes si nadie "
+                      "estaba conectado. Conecta un dispositivo al SSID real "
+                      "y repite la prueba")
             with open(os.devnull, "wb") as nada:
-                subprocess.run([aireplay, "--deauth", "4", "-a", bssid, vif,
-                                "--ignore-negative-one"], stdout=nada,
-                               stderr=nada, timeout=45, check=False)
-            time.sleep(max(10, segundos - 20))
+                if clientes:
+                    # deauth dirigido por cliente: el broadcast lo traga el
+                    # propio clon y a veces ni llega a los asociados
+                    for cliente in sorted(clientes)[:8]:
+                        subprocess.run(
+                            [aireplay, "--deauth", "2", "-a", bssid,
+                             "-c", cliente, vif, "--ignore-negative-one"],
+                            stdout=nada, stderr=nada, timeout=45,
+                            check=False)
+                else:
+                    subprocess.run(
+                        [aireplay, "--deauth", "4", "-a", bssid, vif,
+                         "--ignore-negative-one"], stdout=nada, stderr=nada,
+                        timeout=45, check=False)
+            time.sleep(max(10, segundos - 25))
         finally:
             cazador.terminate()
             cazador.wait(timeout=15)
         pcap = Path(str(cap) + "-01.cap")
         csv = Path(str(cap) + "-01.csv")
-        clientes = set()
-        if csv.is_file():
-            for linea in csv.read_text(errors="replace").splitlines():
-                campos = linea.split(",")
-                if len(campos) > 6 and campos[0].count(":") == 5 \
-                        and campos[1].strip().upper() == bssid:
-                    clientes.add(campos[0])
+        clientes = _clientes_del_csv(csv, bssid)
         hash_22000 = carpeta / "reintentos.22000"
         lineas = 0
         if pcap.is_file():
@@ -1371,6 +1500,12 @@ def main():
                               help="además del down/up, rebind completo del "
                                    "driver PCI (tarjeta colgada)")
     reset_parser.add_argument("--dry-run", action="store_true")
+    mac_parser = sub.add_parser("wifi-mac")
+    mac_parser.add_argument("--interfaz")
+    mac_parser.add_argument("--mac", help="AA:BB:CC:DD:EE:FF o 'random'")
+    mac_parser.add_argument("--restaurar", action="store_true",
+                            help="devolver la MAC permanente de fábrica")
+    mac_parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     try:
         if args.accion == "wifi-wps-pin":
@@ -1406,6 +1541,9 @@ def main():
         if args.accion == "wps-pins":
             return wps_pins(args.interfaz, args.bssid, args.canal,
                             args.limite_intentos, args.dry_run)
+        if args.accion == "wifi-mac":
+            return wifi_mac(args.interfaz, args.mac, args.restaurar,
+                            args.dry_run)
         if args.accion == "wifi-reset":
             return wifi_reset(args.interfaz, args.con_driver, args.dry_run)
         if args.accion == "wifi-monitor":
