@@ -2,7 +2,7 @@
 set -uo pipefail
 export LC_ALL=C
 
-VERSION="1.9.0"
+VERSION="1.9.1"
 SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
@@ -1217,7 +1217,7 @@ escanear_objetivo(){
   cargar_objetivo
   refrescar_monitor
   por_defecto=${OBJ_MON:-$(iw dev 2>/dev/null | awk '$1=="Interface"{print $2; exit}')}
-  interfaz=$(preguntar 'Interfaz WiFi para escanear (entrará en modo monitor y se quedará en él)' "$por_defecto")
+  interfaz=$(preguntar_interfaz_wifi 'Interfaz WiFi para escanear (entrará en modo monitor y se quedará en él)' "$por_defecto")
   if confirmar '¿Continuar? si es tu interfaz de internet te desconectará unos segundos'; then
     forzar=1
   else
@@ -1322,7 +1322,47 @@ preguntar_interfaz_wifi(){
     [ "${ifaces[$i]}" = "$def" ] && marca="  ← ruta por defecto"
     printf '  %d) %s%s\n' "$((i+1))" "${ifaces[$i]}" "$marca" >&2
   done
-  r=$(preguntar "Interfaz (número o nombre)" "${OBJ_MON:-1}") || return 141
+  local por_defecto=${2:-} i_def=1
+  if [ -n "$por_defecto" ]; then
+    for ((i=0; i<${#ifaces[@]}; i++)); do
+      [ "${ifaces[$i]}" = "$por_defecto" ] && i_def=$((i+1))
+    done
+  fi
+  r=$(preguntar "${1:-Interfaz} (número o nombre)" \
+    "${por_defecto:-${OBJ_MON:-$i_def}}") || return 141
+  if [[ "$r" =~ ^[0-9]+$ ]] && [ "$r" -ge 1 ] && [ "$r" -le "${#ifaces[@]}" ]; then
+    printf '%s' "${ifaces[$((r-1))]}"
+  else
+    printf '%s' "$r"
+  fi
+}
+
+preguntar_interfaz_red(){
+  # como preguntar_interfaz_wifi pero con TODAS las interfaces (el MITM
+  # ARP también funciona por cable)
+  local -a ifaces=()
+  local i r linea def
+  while IFS= read -r linea; do
+    [ -n "$linea" ] && ifaces+=("$linea")
+  done < <(ls /sys/class/net 2>/dev/null | grep -v '^lo$')
+  if [ "${#ifaces[@]}" -eq 0 ]; then
+    err "no hay interfaces de red"; return 2
+  fi
+  def=$(ip -o route show default 2>/dev/null \
+        | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
+  printf 'Interfaces de red (el MITM ARP va por la gestionada, NO hace\n' >&2
+  printf 'falta modo monitor; por cable también vale):\n' >&2
+  for ((i=0; i<${#ifaces[@]}; i++)); do
+    local marca=""
+    [ "${ifaces[$i]}" = "$def" ] && marca="  ← ruta por defecto"
+    [ -e "/sys/class/net/${ifaces[$i]}/wireless" ] && marca="$marca (wifi)"
+    printf '  %d) %s%s\n' "$((i+1))" "${ifaces[$i]}" "$marca" >&2
+  done
+  local i_def=1
+  for ((i=0; i<${#ifaces[@]}; i++)); do
+    [ "${ifaces[$i]}" = "$def" ] && i_def=$((i+1))
+  done
+  r=$(preguntar "Interfaz (número o nombre)" "$i_def") || return 141
   if [[ "$r" =~ ^[0-9]+$ ]] && [ "$r" -ge 1 ] && [ "$r" -le "${#ifaces[@]}" ]; then
     printf '%s' "${ifaces[$((r-1))]}"
   else
@@ -1356,8 +1396,10 @@ activar_monitor_aqui(){
   if [ -z "$base" ]; then
     err "no hay interfaz WiFi que activar"; return 2
   fi
+  # 1>&2: el mensaje «wlpXmon en modo monitor. Úsala tal cual...» del
+  # módulo iría a parar al $( ) del llamador y se pegaría a la interfaz
   if ! python3 "$SCRIPT_DIR/extras_wifi.py" wifi-monitor --interfaz "$base" \
-       --accion activar --forzar; then
+       --accion activar --forzar 1>&2; then
     err "no se pudo activar el modo monitor (¿ejecutado sin sudo?)"
     return 2
   fi
@@ -1644,7 +1686,7 @@ guia_extra(){
         parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor')")
       else
         tipo=wifi-pmkid
-        parametros+=(--interfaz "$(preguntar 'Interfaz WiFi dedicada' wlan0)")
+        parametros+=(--interfaz "$(preguntar_interfaz_mon 'Interfaz ya en modo monitor (la necesita pmkid)')")
       fi
       parametros+=(--bssid "$(preguntar_bssid)")
       parametros+=(--canal "$(preguntar_canal)")
@@ -1718,7 +1760,7 @@ guia_extra(){
       parametros+=(--limite-intentos "$(preguntar 'Máximo de intentos (1-200)' 3)");;
     18)
       tipo=mitm-arp
-      parametros+=(--interfaz "$(preguntar 'Interfaz de la LAN (ej. wlan0 o eth0)' wlan0)")
+      parametros+=(--interfaz "$(preguntar_interfaz_red)" )
       valor=$(preguntar 'IPv4 del equipo objetivo (vacío = toda la LAN)' '')
       [ -n "$valor" ] && parametros+=(--objetivo "$valor")
       valor=$(preguntar 'IPv4 del gateway (vacío = el por defecto del sistema)' '')
@@ -1785,7 +1827,7 @@ guia_extra(){
       aviso 'El clon usa la interfaz gestionada: perderás el WiFi durante la prueba'
       interfaz_def=$(ip -o route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
       [ -z "$interfaz_def" ] && interfaz_def=$(ls -d /sys/class/net/*/wireless 2>/dev/null | head -1 | cut -d/ -f5)
-      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi en modo gestionado' "$interfaz_def")")
+      parametros+=(--interfaz "$(preguntar_interfaz_wifi 'Interfaz WiFi en modo gestionado (el clon AP no usa monitor)' "$interfaz_def")")
       parametros+=(--ssid "$(preguntar_ssid)")
       parametros+=(--canal "$(preguntar_canal)")
       parametros+=(--segundos "$(preguntar 'Segundos abierto escuchando asociaciones (10-600)' 60)");;
@@ -1850,7 +1892,7 @@ guia_extra(){
       aviso 'El clon suplanta al AP real (mismo BSSID): los clientes pueden desconectarse un momento'
       interfaz_def=$(ip -o route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
       [ -z "$interfaz_def" ] && interfaz_def=$(ls -d /sys/class/net/*/wireless 2>/dev/null | head -1 | cut -d/ -f5)
-      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi en modo gestionado' "$interfaz_def")")
+      parametros+=(--interfaz "$(preguntar_interfaz_wifi 'Interfaz WiFi en modo gestionado (el clon AP no usa monitor)' "$interfaz_def")")
       parametros+=(--ssid "$(preguntar_ssid)")
       parametros+=(--bssid "$(preguntar_bssid)")
       parametros+=(--canal "$(preguntar_canal)")

@@ -125,6 +125,24 @@ versionado según [SemVer](https://semver.org/lang/es/).
   (ALTA en include/unserialize, MEDIA en ==, BAJA en mysql_*);
   web-owasp real (clickjacking, composer.json y TRACE detectados).
 
+## [1.9.1] - 2026-10-22
+### Corregido
+- `activar` en el prompt de interfaz en monitor: el mensaje del módulo
+  («wlpXmon en modo monitor. Úsala tal cual…») se colaba por el `$( )`
+  y acababa como valor de `--interfaz` (el bug `$'wlp195s0mon en modo
+  monitor. Úsala…'`). La salida del wifi-monitor va ahora a stderr.
+### Añadido
+- MITM ARP (Otros → 5) lista las interfaces numeradas (todas, wifi
+  marcadas, ruta por defecto señalada; por defecto la de la ruta) y
+  aclara en pantalla que el MITM ARP va por la gestionada y NO necesita
+  modo monitor.
+- Todos los prompts de interfaz restantes son numerados: pmkid (con
+  opción `activar`), evil twin/capturamanos (gestionada, con su defecto
+  mapeado al número) y escaneo de objetivos.
+### Verificado
+- 83/83 pruebas. Flujo real `activar` → `--interfaz wlp195s0mon` limpio;
+  MITM con vacío → wlp195s0 (la de la ruta).
+
 ## [Unreleased]
 
 ## [1.5.0] — 2026-10-21
