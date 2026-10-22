@@ -1088,16 +1088,21 @@ def evil_capture(interfaz, ssid, bssid, canal, segundos=90, seco=False):
                 subprocess.run([nmcli, "device", "set", interfaz, "managed",
                                 "off"], stdout=nada, stderr=nada, timeout=15,
                                check=False)
+            time.sleep(2)  # NM necesita soltar el nl80211 antes de hostapd
             subprocess.run(["ip", "link", "set", interfaz, "down"],
                            stdout=nada, stderr=nada, timeout=15, check=False)
             subprocess.run(["ip", "link", "set", interfaz, "address", bssid],
                            stdout=nada, stderr=nada, timeout=15, check=False)
+        with (carpeta / "hostapd.err").open("w+") as errf:
+            # stderr a fichero: con -B el daemon hereda la tubería y un pipe
+            # de capture_output bloquearía o perdería el diagnóstico
             arranque = subprocess.run(
                 [hostapd, "-B", "-P", str(carpeta / "hostapd.pid"), str(conf)],
-                capture_output=True, text=True, timeout=30, check=False)
-        if arranque.returncode != 0:
-            raise ValueError("hostapd no pudo levantar el clon: "
-                             + (arranque.stderr or "").strip()[-300:])
+                stdout=errf, stderr=errf, timeout=30, check=False)
+            if arranque.returncode != 0:
+                errf.seek(0)
+                raise ValueError("hostapd no pudo levantar el clon: "
+                                 + errf.read().strip()[-300:])
         with open(os.devnull, "wb") as nada:
             creacion = subprocess.run(
                 [iw, "phy", phy, "interface", "add", vif, "type", "monitor"],
@@ -1166,9 +1171,17 @@ def evil_capture(interfaz, ssid, bssid, canal, segundos=90, seco=False):
             subprocess.run(["ip", "link", "set", interfaz, "down"],
                            stdout=nada, stderr=nada, timeout=15, check=False)
             if mac_original:
-                subprocess.run(["ip", "link", "set", interfaz, "address",
-                                mac_original], stdout=nada, stderr=nada,
-                               timeout=15, check=False)
+                for _ in range(3):  # hostapd puede tardar en soltar el bdev
+                    suelta = subprocess.run(
+                        ["ip", "link", "set", interfaz, "address",
+                         mac_original], stdout=nada, stderr=nada,
+                        timeout=15, check=False)
+                    if suelta.returncode == 0:
+                        break
+                    time.sleep(2)
+                    subprocess.run(["ip", "link", "set", interfaz, "down"],
+                                   stdout=nada, stderr=nada, timeout=15,
+                                   check=False)
             if nmcli:
                 subprocess.run([nmcli, "device", "set", interfaz, "managed",
                                 "on"], stdout=nada, stderr=nada, timeout=15,

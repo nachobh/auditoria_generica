@@ -1628,7 +1628,9 @@ guia_extra(){
     33)
       tipo=wifi-evil-twin
       aviso 'El clon usa la interfaz gestionada: perderás el WiFi durante la prueba'
-      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi en modo gestionado' "$(ip -o route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)")")
+      interfaz_def=$(ip -o route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
+      [ -z "$interfaz_def" ] && interfaz_def=$(ls -d /sys/class/net/*/wireless 2>/dev/null | head -1 | cut -d/ -f5)
+      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi en modo gestionado' "$interfaz_def")")
       parametros+=(--ssid "$(preguntar_ssid)")
       parametros+=(--canal "$(preguntar_canal)")
       parametros+=(--segundos "$(preguntar 'Segundos abierto escuchando asociaciones (10-600)' 60)");;
@@ -1652,7 +1654,9 @@ guia_extra(){
     39)
       tipo=wifi-evil-capture
       aviso 'El clon suplanta al AP real (mismo BSSID): los clientes pueden desconectarse un momento'
-      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi en modo gestionado' "$(ip -o route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)")")
+      interfaz_def=$(ip -o route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
+      [ -z "$interfaz_def" ] && interfaz_def=$(ls -d /sys/class/net/*/wireless 2>/dev/null | head -1 | cut -d/ -f5)
+      parametros+=(--interfaz "$(preguntar 'Interfaz WiFi en modo gestionado' "$interfaz_def")")
       parametros+=(--ssid "$(preguntar_ssid)")
       parametros+=(--bssid "$(preguntar_bssid)")
       parametros+=(--canal "$(preguntar_canal)")
