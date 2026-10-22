@@ -2,7 +2,7 @@
 set -uo pipefail
 export LC_ALL=C
 
-VERSION="1.9.1"
+VERSION="1.9.2"
 SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
@@ -1259,7 +1259,9 @@ preguntar_bssid(){
     r=$(preguntar 'BSSID del AP autorizado (o "escanear" para elegir objetivo)' "$OBJ_BSSID") || {
       printf '%s' "$r"; return 0; }
     case "$r" in
-      escanear|ESCANEAR|E) escanear_objetivo; continue;;
+      # 1>&2: si quien llama captura con $( ), la lista de APs acababa
+      # siendo el valor del SSID/BSSID (y el usuario no veia los objetivos)
+      escanear|ESCANEAR|E) escanear_objetivo 1>&2; continue;;
     esac
     if [[ "$r" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
       OBJ_BSSID=$(printf '%s' "$r" | tr '[:lower:]' '[:upper:]')
@@ -1277,7 +1279,9 @@ preguntar_ssid(){
     r=$(preguntar 'SSID de la red autorizada (o "escanear" para elegir objetivo)' "$OBJ_ESSID") || {
       printf '%s' "$r"; return 0; }
     case "$r" in
-      escanear|ESCANEAR|E) escanear_objetivo; continue;;
+      # 1>&2: si quien llama captura con $( ), la lista de APs acababa
+      # siendo el valor del SSID/BSSID (y el usuario no veia los objetivos)
+      escanear|ESCANEAR|E) escanear_objetivo 1>&2; continue;;
     esac
     if [ -n "$r" ]; then
       OBJ_ESSID=$r

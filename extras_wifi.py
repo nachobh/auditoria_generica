@@ -1000,6 +1000,32 @@ def wpa3(interfaz, bssid, canal, segundos=60, seco=False):
         _ceder(carpeta)
 
 
+def _restaurar_si_monitor(interfaz):
+    """Si la gestionada desaparecio porque airmon-ng la renombro a <X>mon
+    (p. ej. tras un escaneo con «escanear» en mitad del menu), desactivar
+    el monitor y devolver el nombre base. Sin esto, evil-twin/capture
+    fallaban con «wlpX no tiene phy80211»."""
+    if Path(f"/sys/class/net/{interfaz}").exists():
+        return interfaz
+    if Path(f"/sys/class/net/{interfaz}mon").exists():
+        print(f"[i] {interfaz} no existe (monitor {interfaz}mon activo). "
+              "Desactivando el monitor...")
+        subprocess.run(["airmon-ng", "stop", f"{interfaz}mon"],
+                       capture_output=True)
+        for _ in range(15):
+            if Path(f"/sys/class/net/{interfaz}").exists():
+                break
+            time.sleep(1)
+        subprocess.run(["systemctl", "start", "NetworkManager"],
+                       capture_output=True)
+        subprocess.run(["nmcli", "device", "connect", interfaz],
+                       capture_output=True)
+        return interfaz
+    raise ValueError(
+        f"la interfaz {interfaz} no existe; si hay monitor activo "
+        f"desactiva antes ({interfaz}mon) o responde otra interfaz")
+
+
 def evil_twin(interfaz, ssid, canal=1, segundos=60, seco=False):
     """Clon abierto del SSID con hostapd+dnsmasq; cuenta qué clientes se asocian."""
     if not ssid or len(ssid) > 32:
@@ -1011,6 +1037,7 @@ def evil_twin(interfaz, ssid, canal=1, segundos=60, seco=False):
               f"{interfaz}; se perderá el WiFi durante la prueba y se contarán "
               "las asociaciones entrantes")
         return 0
+    interfaz = _restaurar_si_monitor(interfaz)
     modo = _modo_interfaz(interfaz)
     if modo != "managed":
         raise ValueError(f"{interfaz} está en modo {modo}; evil-twin usa la "
@@ -1259,6 +1286,7 @@ def evil_capture(interfaz, ssid, bssid, canal, segundos=90, seco=False):
               f"dummy en {interfaz}, desautenticar clientes y capturar "
               f"handshakes de reintento durante {segundos}s")
         return 0
+    interfaz = _restaurar_si_monitor(interfaz)
     bssid = validar_objetivo(interfaz, bssid, canal)
     if os.geteuid() != 0:
         raise ValueError("requiere sudo; la interfaz debe estar en managed "

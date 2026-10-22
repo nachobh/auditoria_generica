@@ -143,6 +143,23 @@ versionado según [SemVer](https://semver.org/lang/es/).
 - 83/83 pruebas. Flujo real `activar` → `--interfaz wlp195s0mon` limpio;
   MITM con vacío → wlp195s0 (la de la ruta).
 
+## [1.9.2] - 2026-10-22
+### Corregido
+- `escanear` dentro de los prompts de SSID/BSSID/canal: la lista de
+  objetivos se imprimia DENTRO del `$( )` que capturaba la respuesta,
+  asi que los objetivos no se veian en pantalla y el `--ssid` acababa
+  conteniendo todo el escaneo (`--ssid $'[i] escaneando...`). La salida
+  del escaneo va ahora a stderr.
+- `wlpX no tiene phy80211` en evil twin/capturamanos: si un escaneo con
+  `escanear` habia dejado el monitor puesto, airmon-ng habia renombrado
+  la gestionada a `wlpXmon` y la interfaz respondida antes ya no
+  existia. `_restaurar_si_monitor` desactiva el monitor, espera a que
+  vuelva la gestionada y reconecta NetworkManager antes de seguir.
+### Verificado
+- 83/83 pruebas. Real: escaneo desde el prompt -> `--ssid (oculta)`
+  limpio y objetivos visibles; monitor activo -> evil-capture recupera
+  `wlp195s0` solo y el internet vuelve (NM 100, HTTP 200).
+
 ## [Unreleased]
 
 ## [1.5.0] — 2026-10-21
