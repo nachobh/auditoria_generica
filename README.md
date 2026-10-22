@@ -951,6 +951,15 @@ Sólo el hash `md5`, `sha1` y `lm` están soportados por esta versión. El plan 
 auditor añade el trabajo `n5_rainbow_tablas` sólo si hay tablas `.rt` y el hash es
 MD5/SHA1 crudo.
 
+### Reinicio de la interfaz (v1.7.0)
+
+En **WiFi · Tarjeta de red → 4) Reiniciar/resetear interfaz**
+(`--modo reset [--interfaz X] [--con-driver]`): link down/up, arranque de
+NetworkManager si estaba tumbado y reconexión a los perfiles guardados.
+Con rebind de driver PCI (`--con-driver`) la tarjeta entera se apaga y
+enciende — útil cuando la mt7925 queda colgada tras experimentos con
+monitor/evil twin. No actúa sobre interfaces en modo monitor.
+
 ### Navegador de capturas y apartado PHP (v1.6.0)
 
 - En cualquier prompt de ruta de las auditorías WiFi y de ficheros se

@@ -32,6 +32,20 @@ versionado según [SemVer](https://semver.org/lang/es/).
   detección de versión, veredicto «parcheado», phpinfo expuesto y LFI
   real en el parámetro «file» detectados correctamente.
 
+## [1.7.0] - 2026-10-22
+### Añadido
+- **Reinicio de la interfaz WiFi** desde WiFi · Tarjeta de red (OP 42,
+  `--modo reset` / `wifi-reset`): `ip link` down/up + resurrección de
+  NetworkManager si `airmon-ng check kill` lo tumbó + reconexión NM. Con
+  `--con-driver` hace además rebind completo del driver PCI (unbind/bind),
+  el «apagar y encender» para la mt7925 colgada que no responde a un
+  simple down/up; avisa si el rebind no devuelve la interfaz en 15 s.
+  Rechaza interfaces en modo monitor (dirige a `wifi-monitor --accion
+  desactivar`) y por defecto elige la de la ruta por defecto.
+### Verificado
+- 80/80 pruebas. Reset real sobre wlp195s0: link up, NM 100 (connected) e
+  internet 200 tras el ciclo.
+
 ## [Unreleased]
 
 ## [1.5.0] — 2026-10-21

@@ -556,6 +556,97 @@ def wifi_monitor(interfaz, accion, forzar=False, seco=False):
     return 0
 
 
+def wifi_reset(interfaz=None, con_driver=False, seco=False):
+    """Reinicia el estado de la interfaz WiFi: link down/up + reconexión de
+    NetworkManager y, con --con-driver, rebind completo del driver PCI (el
+    «apagar y encender» para tarjetas mt7925 colgadas que no responden a
+    un simple down/up). No toca el modo monitor: si la interfaz está en
+    monitor, desactívalo antes con wifi-monitor --accion desactivar.
+    """
+    if interfaz and not IFACE.fullmatch(interfaz):
+        raise ValueError("interfaz inválida")
+    if not interfaz:
+        disponibles = _interfaces_wifi()
+        if not disponibles:
+            raise ValueError("no hay ninguna interfaz WiFi en /sys/class/net")
+        predeterminada = _interfaz_predeterminada()
+        interfaz = (predeterminada if predeterminada in disponibles
+                    else disponibles[0])
+    if _modo_interfaz(interfaz) == "monitor":
+        raise ValueError(f"'{interfaz}' está en modo monitor; primero "
+                         "wifi-monitor --accion desactivar")
+    if seco:
+        print(f"Plan: reiniciar {interfaz} (ip link down/up + reconexión "
+              f"NetworkManager)"
+              + (" + rebind del driver PCI" if con_driver else ""))
+        return 0
+    if os.geteuid() != 0:
+        raise ValueError("requiere sudo")
+    ip = shutil.which("ip")
+    if not ip:
+        raise ValueError("falta la utilidad ip (iproute2)")
+    driver = None
+    dispositivo = None
+    nombre_fisico = ""
+    if con_driver:
+        dispositivo = Path(f"/sys/class/net/{interfaz}/device")
+        if not dispositivo.is_dir():
+            raise ValueError(f"{interfaz} no es un dispositivo físico "
+                             "(¿interfaz virtual?)")
+        enlace = dispositivo / "driver"
+        if not enlace.is_dir():
+            raise ValueError(f"{interfaz} no tiene driver PCI asociado")
+        driver = enlace.resolve()
+        nombre_fisico = dispositivo.resolve().name
+    if driver:
+        (driver / "unbind").write_text(nombre_fisico)
+        time.sleep(2)
+        (driver / "bind").write_text(nombre_fisico)
+        for _ in range(15):
+            if Path(f"/sys/class/net/{interfaz}").is_dir():
+                break
+            time.sleep(1)
+        else:
+            print(f"AVISO: el rebind del driver no devolvió {interfaz} en "
+                  "15 s; puede que el kernel la regenere con otro nombre "
+                  "(mira --listar)")
+            return 1
+    subprocess.run([ip, "link", "set", interfaz, "down"], check=False,
+                   capture_output=True, timeout=15)
+    time.sleep(2)
+    subprocess.run([ip, "link", "set", interfaz, "up"], check=False,
+                   capture_output=True, timeout=15)
+    nmcli = shutil.which("nmcli")
+    if nmcli:
+        nm = subprocess.run(["systemctl", "is-active", "NetworkManager"],
+                            capture_output=True, text=True, timeout=10,
+                            check=False)
+        if nm.stdout.strip() != "active":
+            subprocess.run(["systemctl", "start", "NetworkManager"],
+                           capture_output=True, timeout=30, check=False)
+            time.sleep(2)
+        subprocess.run([nmcli, "device", "connect", interfaz],
+                       capture_output=True, timeout=20, check=False)
+    estado = ""
+    ruta_estado = Path(f"/sys/class/net/{interfaz}/operstate")
+    if ruta_estado.is_file():
+        estado = ruta_estado.read_text().strip()
+    print(f"{interfaz} reiniciada (estado del link: {estado or 'desconocido'})")
+    if nmcli:
+        info = subprocess.run([nmcli, "-t", "-f", "GENERAL.STATE,GENERAL"
+                               "-CONNECTIONS.AVAILABLE-CONNECTION-PATH",
+                               "device", "show", interfaz],
+                              capture_output=True, text=True, timeout=10,
+                              check=False)
+        for linea in info.stdout.splitlines():
+            if "AVAILABLE-CONNECTION-PATH" in linea and linea.split(":")[-1]:
+                print("reconectando a los perfiles guardados de la interfaz")
+                break
+    if estado in ("up", "lowerlayerdown"):
+        return 0
+    return 1
+
+
 def _ap_del_csv(csv_path):
     """APs del CSV de airodump: [(bssid, canal, essid, potencia)], sin duplicados."""
     from wifi_capture_utils import normalizar_mac
@@ -1274,6 +1365,12 @@ def main():
     monitor_parser.add_argument("--listar", action="store_true")
     monitor_parser.add_argument("--forzar", action="store_true")
     monitor_parser.add_argument("--dry-run", action="store_true")
+    reset_parser = sub.add_parser("wifi-reset")
+    reset_parser.add_argument("--interfaz")
+    reset_parser.add_argument("--con-driver", action="store_true",
+                              help="además del down/up, rebind completo del "
+                                   "driver PCI (tarjeta colgada)")
+    reset_parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     try:
         if args.accion == "wifi-wps-pin":
@@ -1309,6 +1406,8 @@ def main():
         if args.accion == "wps-pins":
             return wps_pins(args.interfaz, args.bssid, args.canal,
                             args.limite_intentos, args.dry_run)
+        if args.accion == "wifi-reset":
+            return wifi_reset(args.interfaz, args.con_driver, args.dry_run)
         if args.accion == "wifi-monitor":
             if args.listar:
                 return listar_interfaces_wifi()

@@ -2,7 +2,7 @@
 set -uo pipefail
 export LC_ALL=C
 
-VERSION="1.6.0"
+VERSION="1.7.0"
 SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
@@ -106,6 +106,7 @@ alias_modo(){
     wps) printf 'wifi-wps-pin';;
     wps-scan) printf 'wifi-wps-scan';;
     monitor) printf 'wifi-monitor';;
+    reset) printf 'wifi-reset';;
     pmkid) printf 'wifi-pmkid';;
     deauth) printf 'wifi-deauth';;
     mitm) printf 'mitm-arp';;
@@ -133,7 +134,7 @@ alias_modo(){
 
 es_modo_extra(){
   case "$(alias_modo "$1")" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|php-audit|php-checklist|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-reset|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|php-audit|php-checklist|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
     captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test) return 0;;
     *) return 1;;
   esac
@@ -164,6 +165,9 @@ Tipos (--tipo):
                 fabricante/modelo vía WPS o MAC, aviso si coincide con
                 la lista pública de marcas citadas en WPSplinter)
   wifi-monitor  activa/desactiva modo monitor en una interfaz WiFi propia
+  wifi-reset    reinicia la interfaz WiFi (link down/up + reconexión
+                NetworkManager); con --con-driver llega al rebind del driver
+                PCI, para tarjetas colgadas que no responden a un down/up
                 (equivalente a airmon-ng start/stop; --listar para ver
                 interfaces, --accion activar|desactivar, --forzar para
                 tocar la interfaz de tu ruta por defecto)
@@ -1303,13 +1307,14 @@ menu_tarjeta_wifi(){
   local opcion
   while true; do
     printf '\n=== WiFi · Tarjeta de red ===\n'
-    printf '  1) Listar interfaces WiFi y su modo\n  2) Activar modo monitor\n  3) Desactivar modo monitor\n  0) Volver\n'
+    printf '  1) Listar interfaces WiFi y su modo\n  2) Activar modo monitor\n  3) Desactivar modo monitor\n  4) Reiniciar/resetear interfaz (down/up + NM; opcional rebind de driver)\n  0) Volver\n'
     opcion=$(preguntar 'Opción' 0)
     case "$opcion" in
       0) return 0;;
       1) ejecutar_ronda 25;;
       2) ejecutar_ronda 26;;
       3) ejecutar_ronda 27;;
+      4) ejecutar_ronda 42;;
       *) err "opción desconocida: $opcion";;
     esac
   done
@@ -1508,7 +1513,7 @@ guia(){
   # Requiere que el llamador ya haya fijado OP_GUIA (vía seleccionar_objetivo).
   local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41)
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42)
       guia_extra "$op"
       return 0;;
   esac
@@ -1708,6 +1713,13 @@ guia_extra(){
       parametros+=(--segundos "$(preguntar 'Segundos de escaneo BLE (5-300)' 30)");;
     38)
       tipo=sdr-check;;
+    42)
+      tipo=wifi-reset
+      python3 "$SCRIPT_DIR/extras_wifi.py" wifi-monitor --listar
+      interfaz_reset=$(preguntar 'Interfaz WiFi a reiniciar (vacío = la por defecto)' '')
+      [ -n "$interfaz_reset" ] && parametros+=(--interfaz "$interfaz_reset")
+      confirmar '¿Rebind completo del driver PCI (tarjeta entera apaga y enciende)?' \
+        && parametros+=(--con-driver);;
     40)
       tipo=php-audit
       parametros+=(--url "$(preguntar 'URL objetivo (http(s)://…)' 'http://127.0.0.1/')");;
@@ -1946,7 +1958,7 @@ despachar_extra(){
   case "$tipo" in
     web-login|web-sqli|web-basic) modulo=extras_web.py;;
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
-    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins) modulo=extras_wifi.py;;
+    wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-reset|wifi-escanear|wifi-wpsplinter|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins) modulo=extras_wifi.py;;
     ble-recon|sdr-check) modulo=extras_rf.py;;
     php-audit|php-checklist) modulo=extras_php.py;;
     wpsplinter-probar) exec python3 "$SCRIPT_DIR/wpsplinter_probe.py" "${restantes[@]}";;
