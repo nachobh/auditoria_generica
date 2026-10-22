@@ -29,6 +29,7 @@ MENU = {1: (1, 1), 2: (1, 2), 4: (1, 3), 5: (1, 4), 8: (1, 5), 9: (1, 6),
         40: (3, 4, 1), 41: (3, 4, 2),
         42: (2, 1, 4), 44: (2, 1, 5),
         43: (2, 2, 3),
+        45: (3, 4, 3), 46: (3, 4, 4), 47: (3, 5),
         10: (3, 1), 17: (3, 2), 11: (3, 3), 15: (4, 1), 24: (4, 2),
         16: (4, 3), 12: (4, 4), 18: (4, 5), 23: (4, 6)}
 
@@ -312,7 +313,7 @@ class ExtraTests(unittest.TestCase):
                           proceso.stdout)
 
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
-        for opcion in list(range(6, 25)) + [28, 29, 30] + list(range(31, 40)) + [40, 41, 42, 43, 44]:
+        for opcion in list(range(6, 25)) + [28, 29, 30] + list(range(31, 40)) + [40, 41, 42, 43, 44, 45, 46, 47]:
             with self.subTest(opcion=opcion):
                 if opcion in (6, 7):
                     entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
@@ -371,6 +372,12 @@ class ExtraTests(unittest.TestCase):
                     entradas = f"{opcion}\n\nn\nplan\n"
                 elif opcion == 43:
                     entradas = f"{opcion}\nplan\n"
+                elif opcion == 45:
+                    entradas = f"{opcion}\nhttp://127.0.0.1:9/wp\nn\nn\nplan\n"
+                elif opcion == 46:
+                    entradas = f"{opcion}\n{BASE}\nplan\n"
+                elif opcion == 47:
+                    entradas = f"{opcion}\nhttp://127.0.0.1:9/wp\n\n\nplan\n"
                 elif opcion == 44:
                     entradas = f"{opcion}\n\n\nplan\n"
                 else:
@@ -384,6 +391,37 @@ class ExtraTests(unittest.TestCase):
                 self.assertEqual(proceso.returncode, 0, proceso.stderr)
                 self.assertIn("4) Otros", proceso.stdout)
                 self.assertIn("Plan:", proceso.stdout)
+
+    def test_php_cve_static_y_owasp(self):
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--modo", "cve", "--url",
+             "http://127.0.0.1:9/", "--dry-run"],
+            capture_output=True, text=True, timeout=20)
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("session.upload_progress", proceso.stdout)
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "app.php").write_text(
+                "<?php\ninclude $_GET['p'];\n"
+                "$r = unserialize($_COOKIE['s']);\n")
+            proceso = subprocess.run(
+                ["bash", str(AUDITOR), "--modo", "estatico", "--ruta", td],
+                capture_output=True, text=True, timeout=30)
+            self.assertEqual(proceso.returncode, 0, proceso.stderr)
+            self.assertIn("ALTA app.php:2", proceso.stdout)
+            self.assertIn("ALTA app.php:3", proceso.stdout)
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--modo", "owasp", "--url",
+             "http://127.0.0.1:9/", "--dry-run"],
+            capture_output=True, text=True, timeout=20)
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("OWASP", proceso.stdout + proceso.stderr.lower()
+                      + "owasp")
+        with self.subTest("ruta estática inexistente"):
+            proceso = subprocess.run(
+                ["bash", str(AUDITOR), "--modo", "estatico",
+                 "--ruta", "/sin/existir/kit"],
+                capture_output=True, text=True, timeout=20)
+            self.assertEqual(proceso.returncode, 2, proceso.stderr)
 
     def test_prompts_numerados_e_interfaz_por_numero(self):
         # acción «1» en vez de «plan», interfaz «1» en vez del nombre

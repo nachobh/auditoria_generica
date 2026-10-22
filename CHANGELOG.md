@@ -89,6 +89,42 @@ versionado según [SemVer](https://semver.org/lang/es/).
   phpinfo y LFI detectados; fuga y OOM honestamente inconcluyentes/limpias.
   MAC: random → internet 200 → restaurada (permaddr) → NM 100 connected.
 
+## [1.9.0] - 2026-10-22
+### Añadido
+- **`php-cve` (`--modo cve`)**: la primitiva real de CVE-2026-109618/
+  109619 con el script de investigación Masriyan/php2shell vendorizado
+  en `third_party/php2shell/` (MIT): huella de CMS/PHP, exposición de la
+  config de `session.upload_progress` y sonda de envenenado del fichero
+  de sesión; `--activo` = modo active del vendor (evasión de filtros +
+  carrera, sin ejecutar código), `--sink-scan` busca sumideros
+  include()/LFI. Verificado contra servidor PHP 8.4 real (veredicto
+  PRIMITIVE NOT OBSERVED en `php -S`, honesto).
+- **`php-static` (`--modo estatico`)**: análisis estático de fuentes PHP
+  propias — 16 reglas con severidad ALTA/MEDIA/BAJA (RCE con entrada de
+  red, backticks, LFI, deserialización, callbacks, XSS, SQLi por
+  interpolación, variable variables, extract, comparación floja, mysql_*,
+  display_errors), salida `fichero:línea`, salta vendor/node_modules y
+  minificados. Catálogo propio inspirado en Vulny-Code-Static-Analysis,
+  SrLiath/vuln-scan (MIT) y Cobra (MIT).
+- **`web-owasp` (`--modo owasp`)**: barrido OWASP de ~20 peticiones
+  siguiendo las ideas del top-10 de frohrer.com: cabeceras
+  (HSTS/X-Frame/CSP/X-Content-Type), flags de cookies, `.git/config`,
+  `.env`, `composer.json`, robots.txt, listado de directorios, XSS
+  reflejado con marcador `<q>`, SQLi por firma de error, open redirect,
+  CRLF en cabeceras, método TRACE (XST) y regex de datos sensibles;
+  XXE opcional con `--xml-url`. Cada hallazgo es pista, no sentencia.
+- Menús: PHP → 3) php2shell CVE, 4) análisis estático; Web → 5) barrido
+  OWASP rápido.
+### Referencias estudiadas (no vendorizadas)
+- 9bie/php2shell-bypass-aslr-exp (investigación ASLR-pure-HTTP, sin
+  licencia), ikow/php2shell-poc (5 cadenas RCE + reglas Suricata/Sigma/
+  ModSecurity, MIT), syrex1013/php2shell (PoC UAF, MIT), xiaohuolll/…
+  (404). El exploit RCE sigue sin código público weaponizado.
+### Verificado
+- 83/83 pruebas. php-cve real contra `php -S` 8.4.27; php-static real
+  (ALTA en include/unserialize, MEDIA en ==, BAJA en mysql_*);
+  web-owasp real (clickjacking, composer.json y TRACE detectados).
+
 ## [Unreleased]
 
 ## [1.5.0] — 2026-10-21

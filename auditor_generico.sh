@@ -2,7 +2,7 @@
 set -uo pipefail
 export LC_ALL=C
 
-VERSION="1.8.0"
+VERSION="1.9.0"
 SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
@@ -126,6 +126,9 @@ alias_modo(){
     sdr) printf 'sdr-check';;
     evil-capture) printf 'wifi-evil-capture';;
     php) printf 'php-audit';;
+    cve|php2shell) printf 'php-cve';;
+    estatico) printf 'php-static';;
+    owasp) printf 'web-owasp';;
     ssh) printf 'ssh-brute';;
     ftp) printf 'ftp-brute';;
     cred) printf 'cred-scan';;
@@ -136,7 +139,7 @@ alias_modo(){
 
 es_modo_extra(){
   case "$(alias_modo "$1")" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-reset|wifi-mac|live-scan|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|php-audit|php-checklist|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-reset|wifi-mac|live-scan|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|php-audit|php-checklist|php-cve|php-static|web-owasp|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
     captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test) return 0;;
     *) return 1;;
   esac
@@ -209,6 +212,16 @@ Tipos (--tipo):
                 por wrapper php://filter; imprime el checklist clásico
   php-checklist checklist de exploits clásicos de PHP (bugbase, hacktricks,
                 gist de funciones de explotación, netsolutions) sin red
+  php-cve       primitiva session.upload_progress de CVE-2026-109618/109619
+                con el script de investigación Masriyan/php2shell
+                (third_party, MIT): passive=sonda inerte, --activo añade
+                evasión de filtros + carrera; --sink-scan busca LFI
+  php-static    análisis estático de código PHP (reglas de sumideros con
+                entrada de red, inspirado en Vulny/vuln-scan/Cobra):
+                RCE, LFI, deserialización, XSS, SQLi; fichero:línea
+  web-owasp     barrido OWASP rápido (~20 peticiones): cabeceras, cookies,
+                .git/.env, XSS reflejado, SQLi por error, open redirect,
+                CRLF, TRACE, datos sensibles y XXE (--xml-url)
   sdr-check     comprobación de dongle RTL-SDR y utilidades rtl-sdr
   mitm-arp      envenenamiento ARP acotado (bettercap) en red propia o autorizada
   ssh-brute     intentos acotados de contraseña SSH con sshpass
@@ -1520,20 +1533,22 @@ menu_php(){
   local opcion
   while true; do
     printf '\n=== Auditoría Web · PHP ===\n'
-    printf '  1) Auditoría PHP: versión, CVE-2026-109618/109619, phpinfo, LFI php://filter\n  2) Checklist de exploits clásicos de PHP\n  0) Volver\n'
+    printf '  1) Auditoría PHP: versión, CVE-2026-109618/109619, phpinfo, LFI php://filter\n  2) Checklist de exploits clásicos de PHP\n  3) php2shell: sonda de la primitiva CVE-2026-109618/109619 (vendor Masriyan)\n  4) Análisis estático de código PHP (fuentes propias)\n  0) Volver\n'
     opcion=$(preguntar 'Opción' 0)
     case "$opcion" in
       0) return 0;;
       1) ejecutar_ronda 40;;
       2) ejecutar_ronda 41;;
+      3) ejecutar_ronda 45;;
+      4) ejecutar_ronda 46;;
       *) err "opción desconocida: $opcion";;
     esac
   done
 }
 
 menu_web(){
-  local -a nombres=('Acceso tipo WordPress' 'Autenticación HTTP Basic' 'SQLi booleana en formulario GET' 'PHP: apartado propio (auditoría y exploits clásicos)')
-  local -a ids=(10 17 11 menu_php)
+  local -a nombres=('Acceso tipo WordPress' 'Autenticación HTTP Basic' 'SQLi booleana en formulario GET' 'PHP: apartado propio (auditoría y exploits clásicos)' 'Barrido OWASP rápido (cabeceras, XSS, SQLi, redirect, CRLF, XXE…)')
+  local -a ids=(10 17 11 menu_php 47)
   local opcion i
   while true; do
     printf '\n=== Auditoría Web ===\n'
@@ -1591,7 +1606,7 @@ guia(){
   # Requiere que el llamador ya haya fijado OP_GUIA (vía seleccionar_objetivo).
   local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44)
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47)
       guia_extra "$op"
       return 0;;
   esac
@@ -1808,6 +1823,23 @@ guia_extra(){
       esac;;
     43)
       tipo=live-scan;;
+    45)
+      tipo=php-cve
+      parametros+=(--url "$(preguntar 'URL objetivo (http(s)://…)' 'http://127.0.0.1/')")
+      confirmar '¿Modo active del vendor (evasión de filtros + carrera, sigue sin ejecutar código)?' \
+        && parametros+=(--activo)
+      confirmar '¿Buscar también sumideros include()/LFI (--sink-scan)?' \
+        && parametros+=(--sink-scan);;
+    46)
+      tipo=php-static
+      parametros+=(--ruta "$(ruta_guiada "$(preguntar 'Raíz del código PHP a analizar' "$HOME")")");;
+    47)
+      tipo=web-owasp
+      parametros+=(--url "$(preguntar 'URL objetivo (http(s)://…)' 'http://127.0.0.1/')")
+      valor=$(preguntar 'Parámetro a sondear (vacío = id,q,page)' '')
+      [ -n "$valor" ] && parametros+=(--param "$valor")
+      valor=$(preguntar 'Endpoint XML para XXE (vacío = omitir)' '')
+      [ -n "$valor" ] && parametros+=(--xml-url "$valor");;
     40)
       tipo=php-audit
       parametros+=(--url "$(preguntar 'URL objetivo (http(s)://…)' 'http://127.0.0.1/')");;
@@ -2070,7 +2102,8 @@ despachar_extra(){
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
     wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-reset|wifi-mac|wifi-escanear|wifi-wpsplinter|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins) modulo=extras_wifi.py;;
     ble-recon|sdr-check) modulo=extras_rf.py;;
-    php-audit|php-checklist) modulo=extras_php.py;;
+    php-audit|php-checklist|php-cve|php-static) modulo=extras_php.py;;
+    web-owasp) modulo=extras_web.py;;
     wpsplinter-probar) exec python3 "$SCRIPT_DIR/wpsplinter_probe.py" "${restantes[@]}";;
     firmware-yara) exec python3 "$SCRIPT_DIR/extras_firmware.py" "${restantes[@]}";;
     mitm-arp) modulo=extras_mitm.py;;

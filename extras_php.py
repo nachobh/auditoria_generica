@@ -26,6 +26,7 @@ import argparse
 import re
 import secrets
 import subprocess
+import sys
 import tempfile
 import urllib.parse
 from pathlib import Path
@@ -287,6 +288,136 @@ Referencias: bugbase.ai top-10 PHP · hacktricks PHP-tricks · gist
 cloud.google.com CVE-2026-109618/109619 · php.net/archive/2026."""
 
 
+def php_cve(url, activo=False, sink_scan=False, seco=False):
+    """Delegar en el script de investigación Masriyan/php2shell (vendorizado
+    en third_party/php2shell, MIT): huella de CMS/PHP, exposición de la
+    config de session.upload_progress y verificación de la primitiva de
+    envenenado del fichero de sesión (CVE-2026-109618/109619). passive =
+    una sonda inerte; active = evasión de filtros + carrera, siempre sin
+    ejecutar código en el objetivo."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("--url debe ser http(s)://host[/ruta]")
+    script = Path(__file__).resolve().parent / "third_party" / "php2shell" \
+        / "php2shell.py"
+    if not script.is_file():
+        raise ValueError(f"falta {script} (vendorizado en el repo)")
+    orden = [sys.executable, str(script), "--url", url, "--no-confirm"]
+    if activo:
+        orden += ["--mode", "active"]
+    if sink_scan:
+        orden += ["--sink-scan"]
+    if seco:
+        print("Plan: " + " ".join(orden[2:]) +
+              " — sonda de la primitiva session.upload_progress "
+              "(CVE-2026-109618/109619), sin ejecutar código en el "
+              "objetivo; active añade evasión de filtros + carrera")
+        return 0
+    try:
+        proceso = subprocess.run(orden, timeout=300, check=False)
+    except subprocess.TimeoutExpired:
+        print("AVISO: php2shell no terminó en 300 s (objetivo lento o "
+              "sonda active colgada por el WAF)")
+        return 3
+    return proceso.returncode
+
+
+# reglas inspiradas en swisskyrepo/Vulny-Code-Static-Analysis,
+# SrLiath/vuln-scan (MIT) y FeeiCN/Cobra (MIT), podadas a PHP puro y
+# con severidades del criterio del kit
+REGLAS_ESTATICO = (
+    ("ALTA", "RCE: entrada de red en ejecutor de código",
+     r"\b(eval|assert|create_function|preg_replace)\s*\([^)]*"
+     r"\$_(GET|POST|REQUEST|COOKIE|FILES)"),
+    ("ALTA", "RCE: entrada de red en función de comandos",
+     r"\b(system|exec|passthru|shell_exec|popen|proc_open)\s*\([^)]*"
+     r"\$_(GET|POST|REQUEST|COOKIE)"),
+    ("ALTA", "RCE: backticks con variable",
+     r"`[^`]*\$\w+[^`]*`"),
+    ("ALTA", "LFI/RFI: include con entrada de red",
+     r"\b(include|include_once|require|require_once)\s*\(?[^)]*"
+     r"\$_(GET|POST|REQUEST|COOKIE)"),
+    ("ALTA", "deserialización insegura de entrada de red",
+     r"\bunserialize\s*\([^)]*\$_(GET|POST|REQUEST|COOKIE)"),
+    ("ALTA", "callback de usuario con entrada de red",
+     r"\b(call_user_func(_array)?|array_map|usort|array_filter|ob_start)"
+     r"\s*\([^)]*\$_(GET|POST|REQUEST|COOKIE)"),
+    ("MEDIA", "XSS reflejado: echo/print de entrada de red sin filtrar",
+     r"\b(echo|print)\s+\$_(GET|POST|REQUEST|COOKIE)"
+     r"(?!\s*;\s*//\s*xss-escapado)"),
+    ("MEDIA", "SQLi: consulta con variable interpolada",
+     r'''\b(mysql_query|mysqli_query|pg_query|query|exec)\s*\('''
+     r'''[^)]*["'][^"']*\$\w+'''),
+    ("MEDIA", "variable variable con entrada de red",
+     r"\$\$\w+\s*=\s*.*\$_(GET|POST|REQUEST|COOKIE)"),
+    ("MEDIA", "extract() sobre superglobal",
+     r"\bextract\s*\(\s*\$_(GET|POST|REQUEST|COOKIE)"),
+    ("MEDIA", "operación de ficheros con entrada de red",
+     r"\b(fopen|readfile|file_get_contents|file_put_contents|copy|rename"
+     r"|unlink|chmod|move_uploaded_file)\s*\([^)]*\$_(GET|POST|REQUEST"
+     r"|COOKIE|FILES)"),
+    ("MEDIA", "comparación floja con == sobre entrada de red",
+     r"\$_(GET|POST|REQUEST|COOKIE)[^\n]*[^=!<>]==[^=]"),
+    ("BAJA", "API mysql_* deprecada (PHP 7+ la mató)",
+     r"\bmysql_[a-z_]+\s*\("),
+    ("BAJA", "in_array/array_search sin tercer argumento estricto",
+     r"\bin_(array|array_search)\s*\([^)]*\$_(GET|POST|REQUEST)"
+     r"[^)]*\)\s*(;|\))"),
+    ("BAJA", "md5/sha1 como firma de datos no confiables",
+     r"\b(md5|sha1)\s*\([^)]*\$_(GET|POST|REQUEST|COOKIE)"),
+    ("BAJA", "error_reporting(E_ALL)/display_errors en posible producción",
+     r'''\bini_set\s*\(\s*["']display_errors["']\s*,\s*["']?1'''),
+)
+IGNORAR_DIR = {"vendor", "node_modules", ".git", "min", "tests", "test"}
+
+
+def php_static(ruta, limite=400, seco=False):
+    """Análisis estático de código PHP: catálogo de sumideros peligrosos
+    con entrada de red, severidad ALTA/MEDIA/BAJA, salida fichero:línea.
+    No sustituye a un auditor humano ni a Cobra; es la pasada rápida."""
+    raiz = Path(ruta).expanduser()
+    if not raiz.is_dir():
+        raise ValueError(f"'{ruta}' no es un directorio; apunta a la raíz "
+                         "del código PHP")
+    ficheros = []
+    for f in sorted(raiz.rglob("*.php")):
+        if set(f.relative_to(raiz).parts) & IGNORAR_DIR:
+            continue
+        ficheros.append(f)
+        if len(ficheros) >= limite:
+            break
+    if seco:
+        print(f"Plan: análisis estático de {len(ficheros)} .php bajo {raiz} "
+              f"({len(REGLAS_ESTATICO)} reglas, sin ejecutar nada)")
+        return 0
+    if not ficheros:
+        print(f"sin ficheros .php bajo {raiz} (¿rutas a ignorar?)")
+        return 1
+    hits = 0
+    por_sev = {"ALTA": 0, "MEDIA": 0, "BAJA": 0}
+    compiladas = tuple((sev, titulo, re.compile(patron))
+                       for sev, titulo, patron in REGLAS_ESTATICO)
+    for f in ficheros:
+        try:
+            lineas = f.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        for num, linea in enumerate(lineas, 1):
+            if len(linea) > 600:  # minificado: fuera
+                continue
+            for sev, titulo, regex in compiladas:
+                if regex.search(linea):
+                    hits += 1
+                    por_sev[sev] += 1
+                    print(f"{sev} {f.relative_to(raiz)}:{num}: {titulo}")
+                    print(f"      {linea.strip()[:120]}")
+                    break
+    print(f"total: {hits} avisos en {len(ficheros)} ficheros "
+          f"(ALTA {por_sev['ALTA']}, MEDIA {por_sev['MEDIA']}, "
+          f"BAJA {por_sev['BAJA']})")
+    return 0 if por_sev["ALTA"] else (1 if hits else 0)
+
+
 def php_checklist(dry=False):
     if dry:
         print("Plan: imprimir el checklist clásico de PHP (14 vectores, "
@@ -305,11 +436,31 @@ def main():
     audit.add_argument("--sin-oom", action="store_true",
                        help="omite la sonda OOM (POST de 16 MB)")
     audit.add_argument("--dry-run", action="store_true")
+    cve = sub.add_parser("php-cve")
+    cve.add_argument("--url", required=True)
+    cve.add_argument("--activo", action="store_true",
+                     help="modo active del vendor (evasión de filtros + "
+                          "carrera; sigue sin ejecutar código)")
+    cve.add_argument("--sink-scan", action="store_true",
+                     help="buscar además sumideros include()/LFI")
+    cve.add_argument("--dry-run", action="store_true")
+    estatico = sub.add_parser("php-static")
+    estatico.add_argument("--ruta", required=True)
+    estatico.add_argument("--limite", type=int, default=400,
+                          help="máximo de ficheros .php (1-5000)")
+    estatico.add_argument("--dry-run", action="store_true")
     checklist = sub.add_parser("php-checklist")
     checklist.add_argument("--dry-run", action="store_true",
                            help="el checklist es estático: se imprime igual")
     args = parser.parse_args()
     try:
+        if args.accion == "php-cve":
+            return php_cve(args.url, args.activo, args.sink_scan,
+                           args.dry_run)
+        if args.accion == "php-static":
+            if not 1 <= args.limite <= 5000:
+                parser.error("--limite fuera de 1..5000")
+            return php_static(args.ruta, args.limite, args.dry_run)
         if args.accion == "php-audit":
             return php_audit(args.url, args.segundos, args.dry_run,
                            not args.sin_oom)

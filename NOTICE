@@ -32,3 +32,12 @@ Third-party material referenced or downloaded (not redistributed here):
   binary invoked by the zip-conocido mode.
 - Scapy (https://www.scapy.net/), GPLv2+. Python library imported at
   runtime by the WPSplinter fingerprinter; not redistributed here.
+- php2shell (https://github.com/Masriyan/php2shell), MIT License,
+  Copyright (c) 2026 sudo3rs (Mas Rian). Vendored at
+  third_party/php2shell/php2shell.py with its LICENSE; invoked by the
+  php-cve mode to verify the session.upload_progress poisoning primitive
+  of CVE-2026-109618/CVE-2026-109619. The static-analysis rule catalogue
+  of php-static is original work inspired by swisskyrepo/
+  Vulny-Code-Static-Analysis, SrLiath/vuln-scan (MIT) and FeeiCN/Cobra
+  (MIT), none of which are redistributed here; the web-owasp probe set
+  follows the OWASP Top 10 test ideas from blog.frohrer.com.

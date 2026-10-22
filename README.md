@@ -951,6 +951,23 @@ Sólo el hash `md5`, `sha1` y `lm` están soportados por esta versión. El plan 
 auditor añade el trabajo `n5_rainbow_tablas` sólo si hay tablas `.rt` y el hash es
 MD5/SHA1 crudo.
 
+### Navaja suiza PHP/OWASP (v1.9.0)
+
+- **`--modo cve` (PHP → 3)**: ejecuta el script de investigación
+  Masriyan/php2shell (vendorizado, MIT) contra el objetivo: verifica la
+  primitiva `session.upload_progress` de CVE-2026-109618/109619 (sonda
+  inerte; `--activo` añade evasión de filtros + carrera; `--sink-scan`
+  busca el include/LFI que cerraría la cadena RCE). El exploit RCE
+  weaponizado sigue sin ser público; los repos de 9bie, ikow y syrex1013
+  (documentados en CHANGELOG) son investigación y reglas de detección.
+- **`--modo estatico` (PHP → 4)**: auditoría estática de TU código PHP
+  (16 reglas, severidades, `fichero:línea`), al estilo de
+  Vulny-Code-Static-Analysis / vuln-scan / Cobra pero sin dependencias.
+- **`--modo owasp` (Web → 5)**: ~20 peticiones de reconocimiento OWASP
+  (cabeceras, cookies, `.git`/`.env`, XSS reflejado, SQLi por error,
+  open redirect, CRLF, TRACE, datos sensibles, XXE opcional). Ideas del
+  top-10 de frohrer.com; cada hallazgo es pista a confirmar.
+
 ### Pruebas reales y comodidad (v1.8.0)
 
 - **PHP**: `--modo php` ya no se esconde tras un checklist si la versión
