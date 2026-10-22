@@ -2,7 +2,7 @@
 set -uo pipefail
 export LC_ALL=C
 
-VERSION="1.5.0"
+VERSION="1.6.0"
 SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
@@ -122,6 +122,7 @@ alias_modo(){
     ble) printf 'ble-recon';;
     sdr) printf 'sdr-check';;
     evil-capture) printf 'wifi-evil-capture';;
+    php) printf 'php-audit';;
     ssh) printf 'ssh-brute';;
     ftp) printf 'ftp-brute';;
     cred) printf 'cred-scan';;
@@ -132,7 +133,7 @@ alias_modo(){
 
 es_modo_extra(){
   case "$(alias_modo "$1")" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|php-audit|php-checklist|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
     captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test) return 0;;
     *) return 1;;
   esac
@@ -193,6 +194,11 @@ Tipos (--tipo):
   wps-pins      PINes WPS por defecto de fabricante (wordlists/
                 wps_pins_fabricante.txt) con Reaver, acotado por intentos
   ble-recon     descubrimiento Bluetooth/BLE acotado con bluetoothctl
+  php-audit     huella de versión PHP + CVE-2026-109618/109619 del core
+                (RCE sin autenticar, 5.4–8.5.11), phpinfo() expuesto y LFI
+                por wrapper php://filter; imprime el checklist clásico
+  php-checklist checklist de exploits clásicos de PHP (bugbase, hacktricks,
+                gist de funciones de explotación, netsolutions) sin red
   sdr-check     comprobación de dongle RTL-SDR y utilidades rtl-sdr
   mitm-arp      envenenamiento ARP acotado (bettercap) en red propia o autorizada
   ssh-brute     intentos acotados de contraseña SSH con sshpass
@@ -268,6 +274,41 @@ preguntar(){
   # lo usan para no loopear infinitamente sobre una entrada muerta.
   read -r -p "$1 [$2]: " r || { printf '%s' "$2"; return 141; }
   printf '%s' "${r:-$2}"
+}
+
+navegar_capturas(){
+  # lista numerada de capturas crackables bajo $1 (más recientes primero)
+  local dir=$1 f i=1 sel
+  local -a ficheros=()
+  while IFS= read -r f; do ficheros+=("$f"); done < <(
+    find "$dir" -type f \( -iname '*.cap' -o -iname '*.pcap' -o -iname '*.pcapng' \
+      -o -iname '*.ivs' -o -iname '*.hccapx' -o -iname '*.22000' -o -iname '*.wpacc' \) \
+      -printf '%T@\t%p\n' 2>/dev/null | sort -rn | cut -f2- | head -40)
+  if [ "${#ficheros[@]}" -eq 0 ]; then err "no hay capturas bajo $dir"; return 1; fi
+  printf 'Capturas en %s (más recientes primero):\n' "$dir" >&2
+  for f in "${ficheros[@]}"; do printf '  %d) %s\n' "$i" "$f" >&2; i=$((i+1)); done
+  sel=$(preguntar 'Número de captura' 1) || return 141
+  if ! [[ "$sel" =~ ^[0-9]+$ ]] || [ "$sel" -lt 1 ] || [ "$sel" -gt "$i" ]; then
+    err "número fuera de rango"; return 2
+  fi
+  printf '%s' "${ficheros[$((sel-1))]}"
+}
+
+preguntar_ruta(){
+  # como preguntar(), pero responder «navegar» lista las capturas del
+  # directorio del kit (~/capturas_wifi por defecto) y deja elegir una
+  local r dir inicio=$HOME
+  r=$(preguntar "$1 (ruta, o «navegar»)" "${2:-}") || return 141
+  case "$r" in
+    navegar|"navegar capturas"|Navegar)
+      if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+        inicio=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+      fi
+      dir=$(preguntar 'Directorio a navegar' "$inicio/capturas_wifi")
+      dir=$(ruta_guiada "$dir")
+      navegar_capturas "$dir";;
+    *) printf '%s' "$r";;
+  esac
 }
 
 ruta_guiada(){
@@ -1392,9 +1433,24 @@ menu_ficheros(){
   done
 }
 
+menu_php(){
+  local opcion
+  while true; do
+    printf '\n=== Auditoría Web · PHP ===\n'
+    printf '  1) Auditoría PHP: versión, CVE-2026-109618/109619, phpinfo, LFI php://filter\n  2) Checklist de exploits clásicos de PHP\n  0) Volver\n'
+    opcion=$(preguntar 'Opción' 0)
+    case "$opcion" in
+      0) return 0;;
+      1) ejecutar_ronda 40;;
+      2) ejecutar_ronda 41;;
+      *) err "opción desconocida: $opcion";;
+    esac
+  done
+}
+
 menu_web(){
-  local -a nombres=('Acceso tipo WordPress' 'Autenticación HTTP Basic' 'SQLi booleana en formulario GET')
-  local -a ids=(10 17 11)
+  local -a nombres=('Acceso tipo WordPress' 'Autenticación HTTP Basic' 'SQLi booleana en formulario GET' 'PHP: apartado propio (auditoría y exploits clásicos)')
+  local -a ids=(10 17 11 menu_php)
   local opcion i
   while true; do
     printf '\n=== Auditoría Web ===\n'
@@ -1403,7 +1459,8 @@ menu_web(){
     opcion=$(preguntar 'Auditoría' 0)
     [ "$opcion" = 0 ] && return 0
     if [[ "$opcion" =~ ^[1-9][0-9]*$ ]] && [ "$opcion" -le "${#ids[@]}" ]; then
-      ejecutar_ronda "${ids[$((opcion-1))]}"
+      if [ "${ids[$((opcion-1))]}" = menu_php ]; then menu_php
+      else ejecutar_ronda "${ids[$((opcion-1))]}"; fi
     else
       err "opción desconocida: $opcion"
     fi
@@ -1451,7 +1508,7 @@ guia(){
   # Requiere que el llamador ya haya fijado OP_GUIA (vía seleccionar_objetivo).
   local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39)
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41)
       guia_extra "$op"
       return 0;;
   esac
@@ -1463,10 +1520,10 @@ guia(){
     5) TIPO_ARG=externo;;
     *) err "opción de menú desconocida: $op"; exit 2;;
   esac
-  RUTA=$(ruta_guiada "$(preguntar 'Ruta del fichero' '')")
+  RUTA=$(ruta_guiada "$(preguntar_ruta 'Ruta del fichero' '')")
   while [ -z "$RUTA" ] || [ ! -f "$RUTA" ]; do
     err "el fichero no existe"
-    RUTA=$(ruta_guiada "$(preguntar 'Ruta del fichero' '')")
+    RUTA=$(ruta_guiada "$(preguntar_ruta 'Ruta del fichero' '')")
   done
   NIVEL=$(preguntar "Niveles (1, 1-3, 1-5)" "1-3")
   MOTOR_ARG=$(preguntar "Motor (auto/hashcat/john)" "auto")
@@ -1589,7 +1646,7 @@ guia_extra(){
       parametros+=(--retardo "$(preguntar 'Segundos entre PINs' 15)");;
     22)
       tipo=mascara-larga
-      parametros+=(--hash "$(ruta_guiada "$(preguntar 'Ruta del archivo de hash (.22000 u otro modo)' '')")")
+      parametros+=(--hash "$(ruta_guiada "$(preguntar_ruta 'Ruta del archivo de hash (.22000 u otro modo)' '')")")
       parametros+=(--modo "$(preguntar 'Modo numérico de hashcat' 22000)");;
     23)
       case "$(preguntar 'Utilidad (demo / variantes / test)' demo)" in
@@ -1651,6 +1708,11 @@ guia_extra(){
       parametros+=(--segundos "$(preguntar 'Segundos de escaneo BLE (5-300)' 30)");;
     38)
       tipo=sdr-check;;
+    40)
+      tipo=php-audit
+      parametros+=(--url "$(preguntar 'URL objetivo (http(s)://…)' 'http://127.0.0.1/')");;
+    41)
+      tipo=php-checklist;;
     39)
       tipo=wifi-evil-capture
       aviso 'El clon suplanta al AP real (mismo BSSID): los clientes pueden desconectarse un momento'
@@ -1886,6 +1948,7 @@ despachar_extra(){
     zip-conocido|pdf-permisos) modulo=extras_archivos.py;;
     wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-escanear|wifi-wpsplinter|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins) modulo=extras_wifi.py;;
     ble-recon|sdr-check) modulo=extras_rf.py;;
+    php-audit|php-checklist) modulo=extras_php.py;;
     wpsplinter-probar) exec python3 "$SCRIPT_DIR/wpsplinter_probe.py" "${restantes[@]}";;
     firmware-yara) exec python3 "$SCRIPT_DIR/extras_firmware.py" "${restantes[@]}";;
     mitm-arp) modulo=extras_mitm.py;;

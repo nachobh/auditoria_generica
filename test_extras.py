@@ -26,6 +26,7 @@ MENU = {1: (1, 1), 2: (1, 2), 4: (1, 3), 5: (1, 4), 8: (1, 5), 9: (1, 6),
         31: (2, 5, 1), 32: (2, 5, 2), 33: (2, 5, 3), 39: (2, 5, 4),
         34: (2, 5, 5), 35: (2, 5, 6), 36: (2, 5, 7), 37: (2, 5, 8),
         38: (2, 5, 9),
+        40: (3, 4, 1), 41: (3, 4, 2),
         10: (3, 1), 17: (3, 2), 11: (3, 3), 15: (4, 1), 24: (4, 2),
         16: (4, 3), 12: (4, 4), 18: (4, 5), 23: (4, 6)}
 
@@ -309,7 +310,7 @@ class ExtraTests(unittest.TestCase):
                           proceso.stdout)
 
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
-        for opcion in list(range(6, 25)) + [28, 29, 30] + list(range(31, 40)):
+        for opcion in list(range(6, 25)) + [28, 29, 30] + list(range(31, 40)) + [40, 41]:
             with self.subTest(opcion=opcion):
                 if opcion in (6, 7):
                     entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
@@ -360,6 +361,10 @@ class ExtraTests(unittest.TestCase):
                 elif opcion == 39:
                     entradas = (f"{opcion}\n\nRed Ficticia\n02:11:22:33:44:55"
                                 f"\n6\n\nplan\n")
+                elif opcion == 40:
+                    entradas = f"{opcion}\nhttp://127.0.0.1:9/wp\nplan\n"
+                elif opcion == 41:
+                    entradas = f"{opcion}\nplan\n"
                 else:
                     entradas = f"{opcion}\n" + "\n" * 6
                 entradas = entrada_menu(opcion, entradas.split("\n", 1)[1])
@@ -371,6 +376,39 @@ class ExtraTests(unittest.TestCase):
                 self.assertEqual(proceso.returncode, 0, proceso.stderr)
                 self.assertIn("4) Otros", proceso.stdout)
                 self.assertIn("Plan:", proceso.stdout)
+
+    def test_navegar_capturas_en_ruta_guiada(self):
+        with tempfile.TemporaryDirectory() as td:
+            cap = Path(td) / "captura_vieja.pcap"
+            cap.write_bytes(b"dlt")
+            elegida = Path(td) / "captura_nueva.cap"
+            elegida.write_bytes(b"pcap")
+            proceso = subprocess.run(
+                ["bash", str(AUDITOR), "--dry-run"],
+                input=f"2\n3\n1\nnavegar\n{td}\n1\n1\nauto\n",
+                capture_output=True, text=True, timeout=15)
+            self.assertEqual(proceso.returncode, 0, proceso.stderr)
+            self.assertIn("captura_nueva.cap", proceso.stdout)
+            self.assertIn(str(elegida), proceso.stdout)
+
+    def test_php_checklist_y_auditoria_dry_run(self):
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--modo", "php-checklist"],
+            capture_output=True, text=True, timeout=15)
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("Type juggling", proceso.stdout)
+        self.assertIn("CVE-2026-109618", proceso.stdout)
+        proceso = subprocess.run(
+            ["bash", str(AUDITOR), "--modo", "php", "--url",
+             "http://127.0.0.1:9/", "--dry-run"],
+            capture_output=True, text=True, timeout=15)
+        self.assertEqual(proceso.returncode, 0, proceso.stderr)
+        self.assertIn("Plan:", proceso.stdout)
+        with self.subTest("url inválida"):
+            proceso = subprocess.run(
+                ["bash", str(AUDITOR), "--modo", "php", "--url", "ftp://x/"],
+                capture_output=True, text=True, timeout=15)
+            self.assertEqual(proceso.returncode, 2, proceso.stderr)
 
     def test_ftp_brute_dry_run_y_validaciones(self):
         proceso = subprocess.run(

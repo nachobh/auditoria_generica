@@ -951,6 +951,22 @@ Sólo el hash `md5`, `sha1` y `lm` están soportados por esta versión. El plan 
 auditor añade el trabajo `n5_rainbow_tablas` sólo si hay tablas `.rt` y el hash es
 MD5/SHA1 crudo.
 
+### Navegador de capturas y apartado PHP (v1.6.0)
+
+- En cualquier prompt de ruta de las auditorías WiFi y de ficheros se
+  puede responder **`navegar`**: se lista el directorio indicado
+  (`~/capturas_wifi` por defecto) con las capturas crackables más
+  recientes y se elige por número.
+- **Auditoría Web → PHP** (`--modo php --url …`) hace ~13 GETs acotados:
+  huella de versión, veredicto de los **CVE-2026-109618/109619** del core
+  (RCE sin autenticar + fuga de memoria, CVSS 9.2, PHP 5.4–8.5.11,
+  parches 8.5.12/8.4.27/8.3.36/8.2.35, ≤8.1 EOL sin fix), phpinfo()
+  expuesto y LFI por `php://filter/convert.base64-encode`. Con
+  `--modo php-checklist` se imprime el checklist clásico de 14 vectores
+  (bugbase top-10, hacktricks, gist de funciones de explotación,
+  netsolutions). Probado contra un servidor PHP 8.4 real: versión,
+  phpinfo y LFI detectados correctamente.
+
 ## Autocomprobación rápida
 
 Sin descargar ninguna lista:

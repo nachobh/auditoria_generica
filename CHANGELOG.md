@@ -3,6 +3,35 @@
 Formato [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 versionado según [SemVer](https://semver.org/lang/es/).
 
+## [1.6.0] - 2026-10-22
+### Añadido
+- **Navegador de capturas**: en cualquier prompt de ruta de la auditoría
+  WiFi y de ficheros, responder «navegar» lista las capturas
+  (.cap/.pcap/.pcapng/.ivs/.hccapx/.22000/.wpacc) de un directorio
+  (por defecto ~/capturas_wifi, más recientes primero) y deja elegir por
+  número. También en la ruta del hash de «Analizar captura o hash».
+- **Apartado PHP propio dentro de Auditoría Web** (`menu_php`, OP 40-41,
+  `--modo php`/`php-audit`/`php-checklist`, módulo `extras_php.py`):
+  - Huella de versión por cabeceras (X-Powered-By/Server/PHPSESSID).
+  - Veredicto CVE-2026-109618 (limpieza con datos a medio inicializar
+    tras OOM) y CVE-2026-109619 (estado rancio de la petición anterior
+    tras liberar su memoria): RCE sin autenticar + fuga de memoria,
+    CVSS 9.2, PHP 5.4–8.5.11; fix 8.5.12/8.4.27/8.3.36/8.2.35; ≤8.1 EOL
+    sin fix (cloud.google.com 2026-10-21, GHSA-w8hw-w9fx-j79w,
+    GHSA-6wmf-4rv5-p3rp).
+  - Detección de phpinfo() expuesto (6 rutas típicas) y de LFI vía
+    wrapper php://filter/convert.base64-encode en parámetros comunes.
+  - Checklist clásico de 14 vectores: top-10 de bugbase (SQLi, XSS, RFI,
+    LFI, traversal, command injection, deserialización, CSRF/sesión/IDOR,
+    SSRF), type juggling y RCE por env/.htaccess/XAMPP CVE-2024-4577 de
+    hacktricks, funciones de explotación del gist clásico
+    (exec/system/passthru/eval/assert/preg_replace /e/callbacks) y
+    divulgación (phpinfo, get_defined_vars).
+### Verificado
+- 79/79 pruebas. Auditoría real contra servidor PHP 8.4.27 local:
+  detección de versión, veredicto «parcheado», phpinfo expuesto y LFI
+  real en el parámetro «file» detectados correctamente.
+
 ## [Unreleased]
 
 ## [1.5.0] — 2026-10-21
