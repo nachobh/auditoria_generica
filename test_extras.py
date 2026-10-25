@@ -29,7 +29,7 @@ MENU = {1: (1, 1), 2: (1, 2), 4: (1, 3), 5: (1, 4), 8: (1, 5), 9: (1, 6),
         40: (3, 4, 1), 41: (3, 4, 2),
         42: (2, 1, 4), 44: (2, 1, 5),
         43: (2, 2, 3),
-        45: (3, 4, 3), 46: (3, 4, 4), 47: (3, 5), 48: (3, 6),
+        45: (3, 4, 3), 46: (3, 4, 4), 47: (3, 5), 48: (3, 6), 49: (3, 7),
         10: (3, 1), 17: (3, 2), 11: (3, 3), 15: (4, 1), 24: (4, 2),
         16: (4, 3), 12: (4, 4), 18: (4, 5), 23: (4, 6)}
 
@@ -313,7 +313,7 @@ class ExtraTests(unittest.TestCase):
                           proceso.stdout)
 
     def test_menu_guiado_presenta_y_prepara_todos_los_modos_extra(self):
-        for opcion in list(range(6, 25)) + [28, 29, 30] + list(range(31, 40)) + [40, 41, 42, 43, 44, 45, 46, 47, 48]:
+        for opcion in list(range(6, 25)) + [28, 29, 30] + list(range(31, 40)) + [40, 41, 42, 43, 44, 45, 46, 47, 48, 49]:
             with self.subTest(opcion=opcion):
                 if opcion in (6, 7):
                     entradas = f"{opcion}\n\n02:11:22:33:44:55\n6\n\n\n"
@@ -380,6 +380,8 @@ class ExtraTests(unittest.TestCase):
                     entradas = f"{opcion}\nhttp://127.0.0.1:9/wp\n\n\nplan\n"
                 elif opcion == 48:
                     entradas = f"{opcion}\nhttp://127.0.0.1:9/submit-form\n0\nplan\n"
+                elif opcion == 49:
+                    entradas = f"{opcion}\n\n\nn\nplan\n"
                 elif opcion == 44:
                     entradas = f"{opcion}\n\n\nplan\n"
                 else:

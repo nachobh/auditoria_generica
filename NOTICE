@@ -45,3 +45,7 @@ Third-party material referenced or downloaded (not redistributed here):
   runtime by the node2shell mode (CVE-2026-111497 probes) to build valid
   and mutated streams; not redistributed here. Node.js itself is an
   external runtime and is not redistributed.
+- The litellm-check mode's indicators (file names, /tmp markers, C2
+  endpoint, compromised release 1.107.0) are factual data derived from
+  Microsoft Security Blog's 2026-10-23 analysis of the LiteLLM supply
+  chain compromise; no code is redistributed.

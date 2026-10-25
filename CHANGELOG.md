@@ -196,6 +196,28 @@ versionado según [SemVer](https://semver.org/lang/es/).
   confirmado); gloriaynacho.vps.webdock.cloud:3000 → SERVICIO_CAIDO
   (exit 3, no atribuible) a la espera de que el titular lo arranque.
 
+## [1.11.0] - 2026-10-26
+### Añadido
+- `litellm-check` (Web → 7, alias `litellm`): el compromiso de cadena de
+  suministro de LiteLLM 1.107.0 (PyPI e imágenes oficiales, 2026-10-21;
+  análisis de Microsoft Security Blog 2026-10-23). El wheel instalaba
+  cook.pth («import cook»), cook.py (recolector PRIVCOLLECT) y
+  sitecustomize.py (cargador remoto con lock /tmp/remote_code_loader.lock
+  y puntero domain.txt→/codepy) en el lib del entorno, fuera del
+  directorio de litellm: bastaba arrancar Python. Tres caminos, todos sin
+  ejecutar el intérprete sospechoso: `--url` (huella del proxy:
+  /health/liveliness + /version; versión 1.107.0 → RELEASE_COMPROMETIDA),
+  `--ruta` (recorrido a fichero limpio de un venv/imagen con las marcas
+  PRIVCOLLECT/remote_code_loader y dist-info) y `--sistema`
+  (site-packages y marcas de /tmp de esta máquina:
+  .pc_once_72129118c59f5636c0bb, remote_code_loader.lock).
+### Verificado
+- 83/83 pruebas (nueva OP 49). Banco positivo: venv simulado con los tres
+  archivos → ARCHIVOS_INFECCADOS exit 0. Reales: esta máquina →
+  SISTEMA_LIMPIO; https://40-all.com:8003 → NO_ES_LITELLM (404 estilo
+  Werkzeug/Flask, /login — es la app Flask del proyecto, no un proxy
+  LiteLLM); puerto muerto → INCONCLUYENTE exit 3.
+
 ## [Unreleased]
 
 ## [1.5.0] — 2026-10-21

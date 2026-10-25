@@ -978,6 +978,14 @@ MD5/SHA1 crudo.
   reinicio que distingue crash de proceso de error de aplicación).
   Requiere `pip install brotli`. El RCE no se afirma sin PoC público:
   un crash confirmado afirma primitiva de corrupción de memoria.
+- **`--modo litellm` (Web → 7)**: LiteLLM 1.107.0, el compromiso de
+  cadena de suministro del 2026-10-21 (cook.pth / PRIVCOLLECT /
+  sitecustomize.py en el lib del entorno; exfil a
+  `hxxp://www.litellm.dev/healthcheck`). Comprueba el proxy remoto
+  (`--url`), un entorno Python desempaquetado (`--ruta`) o esta máquina
+  (`--sistema`) — siempre sin ejecutar el Python sospechoso. Si tu
+  entorno llegó a tener 1.107.0: reconstruir y rotar credenciales;
+  borrar el paquete no limpia los ficheros de arranque.
 
 ### Pruebas reales y comodidad (v1.8.0)
 
