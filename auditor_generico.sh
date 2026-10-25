@@ -2,7 +2,7 @@
 set -uo pipefail
 export LC_ALL=C
 
-VERSION="1.9.2"
+VERSION="1.10.0"
 SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 WL_DIR="${AUDITOR_WORDLISTS:-$SCRIPT_DIR/wordlists}"
 
@@ -127,6 +127,7 @@ alias_modo(){
     evil-capture) printf 'wifi-evil-capture';;
     php) printf 'php-audit';;
     cve|php2shell) printf 'php-cve';;
+    node|node2shell|brotli) printf 'node2shell';;
     estatico) printf 'php-static';;
     owasp) printf 'web-owasp';;
     ssh) printf 'ssh-brute';;
@@ -139,7 +140,7 @@ alias_modo(){
 
 es_modo_extra(){
   case "$(alias_modo "$1")" in
-    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-reset|wifi-mac|live-scan|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|php-audit|php-checklist|php-cve|php-static|web-owasp|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
+    web-login|web-sqli|web-basic|zip-conocido|pdf-permisos|wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-reset|wifi-mac|live-scan|wifi-escanear|wifi-wpsplinter|wpsplinter-probar|firmware-yara|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins|ble-recon|sdr-check|php-audit|php-checklist|php-cve|php-static|web-owasp|node2shell|mitm-arp|ssh-brute|ftp-brute|cred-scan|wasm) return 0;;
     captura-wifi|captura-wps|reaver-largo|mascara-larga|variantes|demo|test) return 0;;
     *) return 1;;
   esac
@@ -214,6 +215,8 @@ Tipos (--tipo):
                 gist de funciones de explotación, netsolutions) sin red
   php-cve       primitiva session.upload_progress de CVE-2026-109618/109619
                 con el script de investigación Masriyan/php2shell
+  node2shell    Node2Shell CVE-2026-111497: RCE por Brotli en Node.js
+                (<22.23.4/24.22.1/26.12.1); comprobación o ataque acotado
                 (third_party, MIT): passive=sonda inerte, --activo añade
                 evasión de filtros + carrera; --sink-scan busca LFI
   php-static    análisis estático de código PHP (reglas de sumideros con
@@ -1374,6 +1377,18 @@ preguntar_interfaz_red(){
   fi
 }
 
+preguntar_fase_ataque(){
+  # ultimo paso en modos de exploit: 0) comprobacion  1) ataque
+  local r
+  printf 'Último paso:\n  0) Comprobación (sin payloads malformados: solo exposición)\n  1) Ataque (payloads malformados acotados; PUEDE tumbar el servicio unos segundos)\n' >&2
+  r=$(preguntar 'Paso' 0) || { printf '%s' "$r"; return 0; }
+  case "$r" in
+    0|comprobacion) printf comprobacion;;
+    1|ataque) printf ataque;;
+    *) err "paso desconocido: $r"; return 2;;
+  esac
+}
+
 preguntar_accion(){
   # 1) plan  2) prueba — se aceptan también las palabras por compatibilidad
   local r
@@ -1593,8 +1608,8 @@ menu_php(){
 }
 
 menu_web(){
-  local -a nombres=('Acceso tipo WordPress' 'Autenticación HTTP Basic' 'SQLi booleana en formulario GET' 'PHP: apartado propio (auditoría y exploits clásicos)' 'Barrido OWASP rápido (cabeceras, XSS, SQLi, redirect, CRLF, XXE…)')
-  local -a ids=(10 17 11 menu_php 47)
+  local -a nombres=('Acceso tipo WordPress' 'Autenticación HTTP Basic' 'SQLi booleana en formulario GET' 'PHP: apartado propio (auditoría y exploits clásicos)' 'Barrido OWASP rápido (cabeceras, XSS, SQLi, redirect, CRLF, XXE…)' 'Node2Shell: RCE por Brotli en Node.js (CVE-2026-111497)')
+  local -a ids=(10 17 11 menu_php 47 48)
   local opcion i
   while true; do
     printf '\n=== Auditoría Web ===\n'
@@ -1652,7 +1667,7 @@ guia(){
   # Requiere que el llamador ya haya fijado OP_GUIA (vía seleccionar_objetivo).
   local op=$OP_GUIA
   case "$op" in
-    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47)
+    6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48)
       guia_extra "$op"
       return 0;;
   esac
@@ -1876,6 +1891,11 @@ guia_extra(){
         && parametros+=(--activo)
       confirmar '¿Buscar también sumideros include()/LFI (--sink-scan)?' \
         && parametros+=(--sink-scan);;
+    48)
+      tipo=node2shell
+      parametros+=(--url "$(preguntar 'Endpoint que procesa cuerpos (http(s)://…:3000/submit-form)' 'http://127.0.0.1/')")
+      fase=$(preguntar_fase_ataque)
+      parametros+=(--accion "$fase");;
     46)
       tipo=php-static
       parametros+=(--ruta "$(ruta_guiada "$(preguntar 'Raíz del código PHP a analizar' "$HOME")")");;
@@ -2149,6 +2169,7 @@ despachar_extra(){
     wifi-wps-pin|wifi-pmkid|wifi-deauth|wifi-wps-scan|wifi-monitor|wifi-reset|wifi-mac|wifi-escanear|wifi-wpsplinter|wifi-wep|wifi-wpa3|wifi-evil-twin|wifi-evil-capture|wifi-enterprise|wifi-krack|wps-pins) modulo=extras_wifi.py;;
     ble-recon|sdr-check) modulo=extras_rf.py;;
     php-audit|php-checklist|php-cve|php-static) modulo=extras_php.py;;
+    node2shell) modulo=extras_node.py;;
     web-owasp) modulo=extras_web.py;;
     wpsplinter-probar) exec python3 "$SCRIPT_DIR/wpsplinter_probe.py" "${restantes[@]}";;
     firmware-yara) exec python3 "$SCRIPT_DIR/extras_firmware.py" "${restantes[@]}";;

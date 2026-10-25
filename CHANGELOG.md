@@ -160,6 +160,42 @@ versionado según [SemVer](https://semver.org/lang/es/).
   limpio y objetivos visibles; monitor activo -> evil-capture recupera
   `wlp195s0` solo y el internet vuelve (NM 100, HTTP 200).
 
+## [1.10.0] - 2026-10-25
+### Añadido
+- `node2shell` (Web → 6, alias `node`/`brotli`): Node2Shell
+  CVE-2026-111497, OOB write del decodificador Brotli de Node.js
+  (<22.23.4/24.22.1/26.12.1). Dos fases etiquetadas en salida
+  (`fase:`): **comprobación** (¿el endpoint decodifica
+  Content-Encoding: br? plano vs brotli válido vs trivial) y **ataque**
+  (5 mutaciones deterministas y con hash de un stream brotli real —
+  truncados 10/50/90%, flip del último byte, inserción 0xff —
+  entregadas en trozos de 1 byte para forzar el decodificador en
+  streaming, el camino del bug). Taxonomía CRASH_CONFIRMED (con monitor
+  de reinicio 5s×60s y clasificación RESTART_RAPIDO/LENTO) / APP_ERROR /
+  INCONCLUSIVE; si el servicio ya estaba caído antes de la primera
+  sonda, sale 3 «resultado no atribuible» en vez de forzar veredicto.
+  El RCE no se afirma: sin PoC público de grooming de heap, un crash
+  confirma primitiva de corrupción.
+- Último paso «0) Comprobación / 1) Ataque» (`preguntar_fase_ataque`)
+  en los modos de exploit del menú.
+- `php-audit`: veredicto informativo CVE-2026-115560 (advisory
+  php.net 2026-10-23: RCE solo con session.serialize_handler cambiado
+  a 'php' vía ini_set() en runtime + upload_progress activo;
+  mitigación session.upload_progress.enabled=0; fix en el próximo
+  bugfix). `php-cve`: nota separando PRIMITIVA_UPLOAD_PROGRESS del
+  veredicto de versión + referencia al exploit documentado
+  mefulton/CVE-2026-109618-analysis (poc/wp.py: cmdexec real en PHP
+  8.4.7+WordPress 7.1.3, exact-build; repo sin LICENSE, no vendorizado).
+### Verificado
+- 83/83 pruebas (nueva OP 48 en el barrido de menú). Node local
+  v26.12.1 (parcheado) sirvió de banco: EXPUESTO_A_BROTLI en
+  comprobación y APP_ERROR honesto en ataque. Reales:
+  princetonintegralendocrinology.com → PHP 8.3.36 parcheado, primitiva
+  upload_progress no observada (POST multipart bloqueado con 403),
+  OWASP: sin HSTS, sin X-Frame-Options, TRACE 200 sin reflejo (XST no
+  confirmado); gloriaynacho.vps.webdock.cloud:3000 → SERVICIO_CAIDO
+  (exit 3, no atribuible) a la espera de que el titular lo arranque.
+
 ## [Unreleased]
 
 ## [1.5.0] — 2026-10-21

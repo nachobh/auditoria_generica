@@ -41,3 +41,7 @@ Third-party material referenced or downloaded (not redistributed here):
   Vulny-Code-Static-Analysis, SrLiath/vuln-scan (MIT) and FeeiCN/Cobra
   (MIT), none of which are redistributed here; the web-owasp probe set
   follows the OWASP Top 10 test ideas from blog.frohrer.com.
+- Brotli (Google's Python `Brotli` package), MIT License. Imported at
+  runtime by the node2shell mode (CVE-2026-111497 probes) to build valid
+  and mutated streams; not redistributed here. Node.js itself is an
+  external runtime and is not redistributed.

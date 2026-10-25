@@ -967,6 +967,17 @@ MD5/SHA1 crudo.
   (cabeceras, cookies, `.git`/`.env`, XSS reflejado, SQLi por error,
   open redirect, CRLF, TRACE, datos sensibles, XXE opcional). Ideas del
   top-10 de frohrer.com; cada hallazgo es pista a confirmar.
+- **`--modo node2shell` (Web → 6)**: Node2Shell
+  ([CVE-2026-111497](https://github.com/advisories/GHSA-9v8h-qqgm-4m35)),
+  la escritura fuera de límites del decodificador Brotli de Node.js
+  (<22.23.4/24.22.1/26.12.1) que llega por cuerpos de petición con
+  `Content-Encoding: br`. Dos fases: **0) Comprobación** (¿el endpoint
+  decodifica br?) y **1) Ataque** (5 mutaciones deterministas de un
+  stream brotli real, entregadas en trozos de 1 byte para forzar el
+  decodificador en streaming — el camino del bug — con monitor de
+  reinicio que distingue crash de proceso de error de aplicación).
+  Requiere `pip install brotli`. El RCE no se afirma sin PoC público:
+  un crash confirmado afirma primitiva de corrupción de memoria.
 
 ### Pruebas reales y comodidad (v1.8.0)
 

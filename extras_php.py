@@ -188,6 +188,13 @@ def php_audit(url, segundos=10, seco=False, con_oom=True):
     if version:
         veredicto, consejo = _veredicto_cve(version)
         print(f"CVE-2026-109618/109619: {veredicto} — {consejo}")
+        if "parcheado" in veredicto:
+            print("CVE-2026-115560 (advisory 2026-10-23): INFORMATIVO — "
+                  "expuesto solo si la app cambia session.serialize_handler "
+                  "a 'php' con ini_set() en runtime antes de session_start() "
+                  "y session.upload_progress.enabled=1; no detectable sin "
+                  "acceso al código. Mitigación: session.upload_progress."
+                  "enabled=0. Fix en el próximo bugfix release.")
         if "VULNERABLE" in veredicto:
             hallazgos += 1
     else:
@@ -319,6 +326,16 @@ def php_cve(url, activo=False, sink_scan=False, seco=False):
         print("AVISO: php2shell no terminó en 300 s (objetivo lento o "
               "sonda active colgada por el WAF)")
         return 3
+    print()
+    print("[i] PRIMITIVA_UPLOAD_PROGRESS se reporta arriba aparte del "
+          "veredicto de versión: el parche cierra el bug de memoria, no la "
+          "configuración; son dos hechos distintos.")
+    print("[i] Explotación RCE documentada (repo sin LICENSE, no "
+          "vendorizado): mefulton/CVE-2026-109618-analysis — poc/wp.py "
+          "logró ejecución de comandos en PHP 8.4.7 + WordPress 7.1.3 "
+          "(exact-build): OOM de CVE-2026-109618 divulga el layout y el "
+          "estado rancio de CVE-2026-109619 ejecuta. "
+          "https://github.com/mefulton/CVE-2026-109618-analysis")
     return proceso.returncode
 
 
