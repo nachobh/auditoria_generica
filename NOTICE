@@ -49,3 +49,7 @@ Third-party material referenced or downloaded (not redistributed here):
   endpoint, compromised release 1.107.0) are factual data derived from
   Microsoft Security Blog's 2026-10-23 analysis of the LiteLLM supply
   chain compromise; no code is redistributed.
+- The sshole mode's per-branch fixed-version table and technical
+  description of CVE-2026-123158 (*sshole) are factual data derived from
+  Cycode's and Orca Security's 2026-11-05 advisories; no code is
+  redistributed.

@@ -986,6 +986,16 @@ MD5/SHA1 crudo.
   (`--sistema`) — siempre sin ejecutar el Python sospechoso. Si tu
   entorno llegó a tener 1.107.0: reconstruir y rotar credenciales;
   borrar el paquete no limpia los ficheros de arranque.
+- **`--modo sshole` (Otros → 6)**: *sshole
+  [CVE-2026-123158](https://nvd.nist.gov/vuln/detail/CVE-2026-123158),
+  el bypass de contraseña de sshd sobre musl/Alpine (nov-2026): una
+  contraseña de 257-1024 bytes entra en cualquier cuenta SIN contraseña
+  cuando sshd comprueba sin PAM (default de Alpine). Comprueba esta
+  máquina (`--sistema`), un host remoto (`--host`, banner + métodos de
+  auth) o explota de verdad (`--host H --explotar --usuario root`,
+  2 intentos con contraseña de 512/700 bytes). Fix: OpenSSH 10.6p2 o el
+  backport de tu rama Alpine + **restart de sshd**; sin parche,
+  `PasswordAuthentication no`. glibc/PAM/Dropbear no están afectados.
 
 ### Pruebas reales y comodidad (v1.8.0)
 

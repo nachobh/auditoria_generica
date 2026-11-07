@@ -218,6 +218,29 @@ versionado según [SemVer](https://semver.org/lang/es/).
   Werkzeug/Flask, /login — es la app Flask del proyecto, no un proxy
   LiteLLM); puerto muerto → INCONCLUYENTE exit 3.
 
+## [1.12.0] - 2026-11-06
+### Añadido
+- `sshole` (Otros → 6, alias `sshole`/`asshole`): *sshole
+  CVE-2026-123158 (CVSS 8.1), bypass de contraseña en sshd sobre musl
+  (Cycode/Orca, 2026-11-05). Raíz: musl hace que crypt() devuelva "*" al
+  fallar y sus SHA-crypt rechazan contraseñas de más de 256 bytes; las
+  cuentas sin contraseña guardan "*" en shadow; sshd sin PAM (default de
+  openssh-server en Alpine) compara "*"=="*" y deja pasar una contraseña
+  de 257-1024 bytes. Tres caminos: `--sistema` (musl vs glibc, rama
+  Alpine contra la tabla de fixes por rama 3.16→edge, sshd -T, cuentas
+  '*' de shadow), `--host` (banner + métodos de auth ofrecidos,
+  heurístico) y `--host --explotar` (login acotado a 2 intentos con
+  contraseña de 512 y 700 bytes ejecutando `id; hostname`; el
+  'Accepted password' resultante ES el IOC de compromiso). glibc, PAM y
+  Dropbear: NO_AFECTADO. Mitigación: apk upgrade + `rc-service sshd
+  restart` (el paquete nuevo no sustituye al demonio en ejecución) o
+  PasswordAuthentication no.
+### Verificado
+- 83/83 pruebas (nueva OP 50). Reales: esta máquina (Debian/glibc) →
+  NO_AFECTADO; sshd local → CANDIDATO heurístico y BYPASS_NO_CONFIRMADO
+  al explotar (negativo honesto en glibc); banner SSH-2.0-OpenSSH_10.0p2
+  parseado.
+
 ## [Unreleased]
 
 ## [1.5.0] — 2026-10-21
