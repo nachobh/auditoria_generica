@@ -993,9 +993,17 @@ MD5/SHA1 crudo.
   cuando sshd comprueba sin PAM (default de Alpine). Comprueba esta
   máquina (`--sistema`), un host remoto (`--host`, banner + métodos de
   auth) o explota de verdad (`--host H --explotar --usuario root`,
-  2 intentos con contraseña de 512/700 bytes). Fix: OpenSSH 10.6p2 o el
+  2 intentos con contraseña de 512/700 bytes, o 1 con `--longitud` para
+  controles de frontera 256/257/1024/1025). Fix: OpenSSH 10.6p2 o el
   backport de tu rama Alpine + **restart de sshd**; sin parche,
   `PasswordAuthentication no`. glibc/PAM/Dropbear no están afectados.
+  La revisión Codex afinó el modelo (v1.12.1): además de la cuenta con
+  `*` exacto en shadow hace falta **una cuenta SHA-`$5$`/`$6$`** que
+  aporte algoritmo y salt; `keyboard-interactive` usa PAM y **no** es
+  vector (solo el método `password` exacto); `PermitRootLogin
+  prohibit-password` protege root; y un login largo aceptado en un host
+  sin marca Alpine es `LOGIN_ACEPTADO_NO_ATRIBUIDO` hasta corroborar
+  musl y shadow en el servidor.
 
 ### Pruebas reales y comodidad (v1.8.0)
 

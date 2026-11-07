@@ -218,6 +218,34 @@ versionado según [SemVer](https://semver.org/lang/es/).
   Werkzeug/Flask, /login — es la app Flask del proyecto, no un proxy
   LiteLLM); puerto muerto → INCONCLUYENTE exit 3.
 
+## [1.12.1] - 2026-11-07
+### Cambiado — sshole según la revisión Codex (gpt-6.1-sol)
+- Modelo corregido: hace falta ADEMÁS una cuenta SHA-$5$/$6$ (aporte
+  algoritmo y salt); "sin contraseña" = shadow EXACTO "*" (los "!" de
+  cuentas bloqueadas no coinciden); PermitRootLogin prohibit-password
+  protege root (no prometer root universal); ventana 257-1024
+  INCLUSIVA (auth_password rechaza >1024 por strlen); Alpine <3.16
+  puede ser vulnerable pero carece de backport.
+- keyboard-interactive usa PAM: NO es vector — se exige el método
+  exacto "password" (antes "keyboard" también colaba).
+- Falsos positivos locales eliminados: EXPUESTO exige TODOS los
+  requisitos booleanos verificados (PasswordAuthentication, UsePAM no,
+  cuenta '*', cuenta SHA, rama afectada); requisito cerrado explícito
+  → CERRADO salida 1; sin evidencia → INCONCLUYENTE salida 3.
+- Sonda que no obtiene la lista de auth (conexión cortada) →
+  INCONCLUYENTE 3, nunca negativo 1; el banner se lee con presupuesto
+  total (10 s/4 KiB), saltando líneas preliminares RFC 4253.
+- Explotación endurecida: ssh aislada de la config del usuario
+  (-F /dev/null, sin ProxyCommand ni multiplexación), fallo de
+  ejecutable/timeout sin traceback, --puerto validado, --explotar sin
+  --host → 2, y nuevo veredicto LOGIN_ACEPTADO_NO_ATRIBUIDO (3):
+  rc=0+'uid=' solo es BYPASS_CONFIRMADO (0) si el banner lleva marca
+  Alpine. Añadido --longitud con fronteras {256,257,512,700,1024,1025}.
+- Reales tras el cambio: los 6 ataques (admin/root en 40-all.com,
+  gloriaynacho, adibenito/root en princeton) siguen
+  BYPASS_NO_CONFIRMADO salida 3; banners Debian/9.2p1-Debian/sin
+  sufijo → glibc, inmunes estructuralmente. 83/83 pruebas.
+
 ## [1.12.0] - 2026-11-06
 ### Añadido
 - `sshole` (Otros → 6, alias `sshole`/`asshole`): *sshole
